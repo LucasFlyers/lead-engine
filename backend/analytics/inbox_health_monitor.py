@@ -5,8 +5,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.models import EmailSent, Response, InboxHealth
-from ..deliverability.inbox_rotation_manager import get_rotation_manager
+from db.models import EmailSent, Response, InboxHealth
+from deliverability.inbox_rotation_manager import get_rotation_manager
 
 logger = logging.getLogger(__name__)
 

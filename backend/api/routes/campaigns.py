@@ -5,8 +5,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db.database import get_db
-from ...analytics.campaign_intelligence import (
+from db.database import get_db
+from analytics.campaign_intelligence import (
     get_campaign_summary,
     get_best_subject_lines,
     get_best_industries,

@@ -16,8 +16,8 @@ import os
 import time
 from datetime import datetime
 
-from ..db.database import AsyncSessionLocal
-from ..db.models import (
+from db.database import AsyncSessionLocal
+from db.models import (
     Company, Contact, LeadScore, OutreachQueue, PainSignal, SystemEvent,
 )
 

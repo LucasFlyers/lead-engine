@@ -8,9 +8,9 @@ import logging
 import os
 import time
 
-from ..db.database import AsyncSessionLocal, init_db
-from ..utils.logging import configure_logging
-from .email_sender import recover_stuck_sends
+from db.database import AsyncSessionLocal, init_db
+from utils.logging import configure_logging
+from email_sender import recover_stuck_sends
 
 logger = logging.getLogger(__name__)
 

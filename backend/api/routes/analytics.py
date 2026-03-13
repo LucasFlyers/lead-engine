@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 
-from ..db.database import get_db
-from ..analytics.campaign_intelligence import CampaignIntelligence
-from ..analytics.inbox_health_monitor import InboxHealthMonitor
+from db.database import get_db
+from analytics.campaign_intelligence import CampaignIntelligence
+from analytics.inbox_health_monitor import InboxHealthMonitor
 
 router = APIRouter()
 intelligence = CampaignIntelligence()

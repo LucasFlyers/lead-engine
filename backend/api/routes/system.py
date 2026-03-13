@@ -2,8 +2,8 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..db.database import get_db
-from ..db.models import SystemEvent
+from db.database import get_db
+from db.models import SystemEvent
 
 router = APIRouter()
 

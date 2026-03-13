@@ -18,8 +18,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from ..ai.email_personalizer import classify_response
-from ..deliverability.inbox_rotation_manager import get_rotation_manager_sync
+from ai.email_personalizer import classify_response
+from deliverability.inbox_rotation_manager import get_rotation_manager_sync
 
 logger = logging.getLogger(__name__)
 

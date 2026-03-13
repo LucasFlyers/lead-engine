@@ -9,8 +9,8 @@ import os
 import time
 from datetime import datetime
 
-from ..db.database import AsyncSessionLocal, init_db
-from ..utils.logging import configure_logging
+from db.database import AsyncSessionLocal, init_db
+from utils.logging import configure_logging
 
 logger = logging.getLogger(__name__)
 

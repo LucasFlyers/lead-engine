@@ -10,6 +10,7 @@ AUDIT FIXES:
 - Trusted host middleware
 - Global 500 handler logs error_id for traceability
 - Startup: DB init, inbox sync, stuck-send recovery
+- DEPLOYMENT FIX: changed relative imports to absolute imports
 """
 import logging
 import os
@@ -21,30 +22,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
-from .api.routes.activity     import router as activity_router
-from .api.routes.campaigns    import router as campaigns_router
-from .api.routes.inbox        import router as inbox_router
-from .api.routes.leads        import router as leads_router
-from .api.routes.pain_signals import router as pain_signals_router
-from .db.database             import check_db_health, init_db, AsyncSessionLocal
+# Absolute imports (required when running with uvicorn main:app from /app dir)
+from api.routes.activity     import router as activity_router
+from api.routes.campaigns    import router as campaigns_router
+from api.routes.inbox        import router as inbox_router
+from api.routes.leads        import router as leads_router
+from api.routes.pain_signals import router as pain_signals_router
+from db.database             import check_db_health, init_db, AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
-# --------------------------------------------------------------------------- #
-#  Configuration
-# --------------------------------------------------------------------------- #
-API_KEY      = os.environ.get("API_SECRET_KEY", "")      # empty = auth disabled (dev only)
+# ─── Configuration ──────────────────────────────────────────────────────────
+API_KEY         = os.environ.get("API_SECRET_KEY", "")
 ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",")]
-ENV          = os.environ.get("ENV", "development")
+ENV             = os.environ.get("ENV", "development")
 
 
-# --------------------------------------------------------------------------- #
-#  Auth middleware
-# --------------------------------------------------------------------------- #
+# ─── Auth middleware ─────────────────────────────────────────────────────────
 UNPROTECTED_PATHS = {"/health", "/", "/docs", "/openapi.json", "/redoc"}
 
 async def api_key_middleware(request: Request, call_next):
-    """Require X-API-Key header on all non-public routes (when key is configured)."""
     if API_KEY and request.url.path not in UNPROTECTED_PATHS:
         provided = request.headers.get("X-API-Key", "")
         if not provided:
@@ -52,7 +49,6 @@ async def api_key_middleware(request: Request, call_next):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "X-API-Key header required"},
             )
-        # Constant-time comparison to prevent timing attacks
         import hmac
         if not hmac.compare_digest(provided, API_KEY):
             return JSONResponse(
@@ -62,23 +58,19 @@ async def api_key_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-# --------------------------------------------------------------------------- #
-#  Lifespan
-# --------------------------------------------------------------------------- #
+# ─── Lifespan ────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Lead Engine API (env=%s)...", ENV)
 
-    # Initialise DB schema
     try:
         await init_db()
         logger.info("Database schema verified")
     except Exception as exc:
         logger.error("DB init error (non-fatal): %s", exc)
 
-    # Sync inbox state from DB
     try:
-        from .deliverability.inbox_rotation_manager import get_rotation_manager
+        from deliverability.inbox_rotation_manager import get_rotation_manager
         mgr = get_rotation_manager()
         async with AsyncSessionLocal() as db:
             await mgr.sync_from_db(db)
@@ -86,9 +78,8 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Inbox sync error (non-fatal): %s", exc)
 
-    # Recover stuck queue items
     try:
-        from .workers.email_sender import recover_stuck_sends
+        from workers.email_sender import recover_stuck_sends
         async with AsyncSessionLocal() as db:
             await recover_stuck_sends(db)
     except Exception as exc:
@@ -98,23 +89,18 @@ async def lifespan(app: FastAPI):
     logger.info("Lead Engine API shutting down")
 
 
-# --------------------------------------------------------------------------- #
-#  App
-# --------------------------------------------------------------------------- #
+# ─── App ─────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Autonomous Lead Engine API",
     description="AI-powered cold email outreach and lead intelligence",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url="/docs" if ENV != "production" else None,   # hide Swagger in prod
+    docs_url="/docs" if ENV != "production" else None,
     redoc_url="/redoc" if ENV != "production" else None,
 )
 
-# Body size limit (1 MB)
-app.add_middleware(
-    __import__("starlette.middleware.base", fromlist=["BaseHTTPMiddleware"]).BaseHTTPMiddleware,
-    dispatch=api_key_middleware,
-)
+from starlette.middleware.base import BaseHTTPMiddleware
+app.add_middleware(BaseHTTPMiddleware, dispatch=api_key_middleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -129,22 +115,19 @@ if ENV == "production":
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
 
-# --------------------------------------------------------------------------- #
-#  Global error handler
-# --------------------------------------------------------------------------- #
+# ─── Global error handler ────────────────────────────────────────────────────
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     error_id = str(uuid.uuid4())[:8]
-    logger.error("Unhandled error [%s] %s %s: %s", error_id, request.method, request.url.path, exc, exc_info=True)
+    logger.error("Unhandled error [%s] %s %s: %s",
+                 error_id, request.method, request.url.path, exc, exc_info=True)
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error", "error_id": error_id},
     )
 
 
-# --------------------------------------------------------------------------- #
-#  Routes
-# --------------------------------------------------------------------------- #
+# ─── Routes ──────────────────────────────────────────────────────────────────
 PREFIX = "/api/v1"
 app.include_router(leads_router,        prefix=PREFIX)
 app.include_router(campaigns_router,    prefix=PREFIX)
@@ -157,9 +140,9 @@ app.include_router(activity_router,     prefix=PREFIX)
 async def health():
     db_ok = await check_db_health()
     return {
-        "status": "ok" if db_ok else "degraded",
+        "status":   "ok" if db_ok else "degraded",
         "database": "connected" if db_ok else "unreachable",
-        "env": ENV,
+        "env":      ENV,
     }
 
 

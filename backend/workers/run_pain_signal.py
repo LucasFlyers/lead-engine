@@ -8,8 +8,8 @@ import logging
 import os
 import time
 
-from ..db.database import init_db
-from ..utils.logging import configure_logging
+from db.database import init_db
+from utils.logging import configure_logging
 
 logger = logging.getLogger(__name__)
 

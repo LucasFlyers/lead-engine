@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db.database import get_db
-from ...db.models import PainSignal
+from db.database import get_db
+from db.models import PainSignal
 
 router = APIRouter(prefix="/pain-signals", tags=["pain_signals"])
 

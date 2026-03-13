@@ -27,8 +27,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
 
-from ..deliverability.inbox_rotation_manager import get_rotation_manager_sync, InboxConfig
-from ..deliverability.spam_safety_checks import spam_checker
+from deliverability.inbox_rotation_manager import get_rotation_manager_sync, InboxConfig
+from deliverability.spam_safety_checks import spam_checker
 
 logger = logging.getLogger(__name__)
 

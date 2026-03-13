@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.models import (
+from db.models import (
     EmailSent, Response, CampaignMetrics, Company, InboxHealth
 )
 
