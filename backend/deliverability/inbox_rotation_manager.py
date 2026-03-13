@@ -136,7 +136,7 @@ class InboxRotationManager:
     async def sync_from_db(self, db) -> None:
         """Sync sent_today and warmup_week from InboxHealth table on startup."""
         from sqlalchemy import select
-        from ..db.models import InboxHealth
+        from db.models import InboxHealth
 
         today = date.today()
         result = await db.execute(select(InboxHealth))
@@ -183,7 +183,7 @@ class InboxRotationManager:
     async def _persist_health(self, inbox_email: str, db) -> None:
         """Write sent_today back to InboxHealth table."""
         from sqlalchemy import select
-        from ..db.models import InboxHealth
+        from db.models import InboxHealth
 
         for inbox in self.inboxes:
             if inbox.email == inbox_email:
@@ -209,7 +209,7 @@ class InboxRotationManager:
 
         if db is not None:
             from sqlalchemy import select
-            from ..db.models import InboxHealth
+            from db.models import InboxHealth
             result = await db.execute(
                 select(InboxHealth).where(InboxHealth.inbox_email == inbox_email)
             )
@@ -231,7 +231,7 @@ class InboxRotationManager:
 
         if db is not None:
             from sqlalchemy import select
-            from ..db.models import InboxHealth
+            from db.models import InboxHealth
             result = await db.execute(
                 select(InboxHealth).where(InboxHealth.inbox_email == inbox_email)
             )

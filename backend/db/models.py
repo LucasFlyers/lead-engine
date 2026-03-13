@@ -197,5 +197,5 @@ class SystemEvent(Base):
     entity_type: Mapped[Optional[str]]     = mapped_column(Text)
     entity_id:   Mapped[Optional[uuid.UUID]]= mapped_column(UUID(as_uuid=True))
     message:     Mapped[str]               = mapped_column(Text, nullable=False)
-    metadata:    Mapped[Optional[dict]]    = mapped_column(JSONB)
+    event_metadata: Mapped[Optional[dict]]    = mapped_column(JSONB)
     created_at:  Mapped[datetime]          = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

@@ -168,7 +168,7 @@ CREATE TABLE system_events (
     entity_type TEXT,
     entity_id   UUID,
     message     TEXT NOT NULL,
-    metadata    JSONB,
+    event_metadata JSONB,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

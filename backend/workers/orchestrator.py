@@ -45,12 +45,12 @@ async def run_scraping_pipeline() -> None:
     t0 = time.monotonic()
     logger.info("=== Scraping pipeline START ===")
 
-    from ..scrapers.clutch_scraper           import scrape_clutch
-    from ..scrapers.google_maps_scraper      import scrape_google_maps
-    from ..scrapers.agency_directory_scraper import scrape_agency_directories
-    from ..scrapers.email_discovery          import discover_emails
-    from ..deduplication.lead_deduper        import deduplicate_batch
-    from ..ai.lead_scoring                   import score_leads_batch
+    from scrapers.clutch_scraper           import scrape_clutch
+    from scrapers.google_maps_scraper      import scrape_google_maps
+    from scrapers.agency_directory_scraper import scrape_agency_directories
+    from scrapers.email_discovery          import discover_emails
+    from deduplication.lead_deduper        import deduplicate_batch
+    from ai.lead_scoring                   import score_leads_batch
     from sqlalchemy import select, text
 
     async with AsyncSessionLocal() as db:
@@ -180,10 +180,10 @@ async def run_pain_signal_pipeline() -> None:
     t0 = time.monotonic()
     logger.info("=== Pain signal pipeline START ===")
 
-    from ..pain_scrapers.reddit_scraper  import scrape_reddit
-    from ..pain_scrapers.forum_scraper   import scrape_forums
-    from ..pain_scrapers.review_scraper  import scrape_reviews
-    from ..ai.pain_signal_analyzer       import analyze_batch
+    from pain_scrapers.reddit_scraper  import scrape_reddit
+    from pain_scrapers.forum_scraper   import scrape_forums
+    from pain_scrapers.review_scraper  import scrape_reviews
+    from ai.pain_signal_analyzer       import analyze_batch
     from sqlalchemy import select
 
     all_signals: list[dict] = []
@@ -239,7 +239,7 @@ async def run_pain_signal_pipeline() -> None:
 #  Pipeline: Email sending
 # --------------------------------------------------------------------------- #
 async def run_email_pipeline() -> None:
-    from ..workers.email_sender import process_outreach_queue
+    from workers.email_sender import process_outreach_queue
     async with AsyncSessionLocal() as db:
         sent = await process_outreach_queue(db)
         if sent:
@@ -250,7 +250,7 @@ async def run_email_pipeline() -> None:
 #  Inbox monitoring
 # --------------------------------------------------------------------------- #
 async def run_inbox_monitor() -> None:
-    from ..workers.inbox_monitor import monitor_all_inboxes
+    from workers.inbox_monitor import monitor_all_inboxes
     async with AsyncSessionLocal() as db:
         processed = await monitor_all_inboxes(db)
         if processed:
@@ -261,7 +261,7 @@ async def run_inbox_monitor() -> None:
 #  Health check
 # --------------------------------------------------------------------------- #
 async def run_health_check() -> None:
-    from ..analytics.inbox_health_monitor import check_all_inbox_health
+    from analytics.inbox_health_monitor import check_all_inbox_health
     async with AsyncSessionLocal() as db:
         results = await check_all_inbox_health(db)
         logger.info("Health check: %d inboxes evaluated", len(results))
@@ -272,8 +272,8 @@ async def run_health_check() -> None:
 # --------------------------------------------------------------------------- #
 async def _startup_tasks() -> None:
     """Tasks to run once on worker startup."""
-    from ..workers.email_sender import recover_stuck_sends
-    from ..deliverability.inbox_rotation_manager import get_rotation_manager
+    from workers.email_sender import recover_stuck_sends
+    from deliverability.inbox_rotation_manager import get_rotation_manager
 
     logger.info("Running startup tasks...")
 

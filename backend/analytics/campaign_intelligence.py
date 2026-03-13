@@ -178,7 +178,7 @@ async def get_campaign_summary(db: AsyncSession, days: int = 30) -> dict:
     )
 
     # Companies in queue
-    from ..db.models import OutreachQueue
+    from db.models import OutreachQueue
     in_queue = await db.scalar(
         select(func.count(OutreachQueue.id)).where(OutreachQueue.status == "pending")
     )

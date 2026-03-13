@@ -216,7 +216,7 @@ async def send_email_with_retry(
 async def recover_stuck_sends(db_session) -> int:
     """Reset 'sending' items that got stuck (e.g. worker crash). Call on startup."""
     from sqlalchemy import update, select, func
-    from ..db.models import OutreachQueue
+    from db.models import OutreachQueue
 
     result = await db_session.execute(
         update(OutreachQueue)
@@ -234,10 +234,10 @@ async def recover_stuck_sends(db_session) -> int:
 async def process_outreach_queue(db_session, batch_size: int = 10) -> int:
     """Fetch pending queue items and send emails with all safety checks."""
     from sqlalchemy import select, update
-    from ..db.models import (
+    from db.models import (
         OutreachQueue, Company, Contact, EmailSent, LeadScore
     )
-    from ..ai.email_personalizer import generate_email
+    from ai.email_personalizer import generate_email
 
     # Fetch pending items, skip unsubscribed contacts
     queue_result = await db_session.execute(

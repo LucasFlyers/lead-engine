@@ -30,15 +30,15 @@ async def scrape_status():
 
 async def _run_scrape_pipeline(req: ScrapeRequest):
     """Background task that runs the full scrape → score → queue pipeline."""
-    from ..scrapers.clutch_scraper import ClutchScraper
-    from ..scrapers.google_maps_scraper import GoogleMapsScraper
-    from ..scrapers.email_discovery import EmailDiscovery
-    from ..pain_scrapers.reddit_scraper import RedditScraper
-    from ..ai.pain_signal_analyzer import PainSignalAnalyzer
-    from ..ai.lead_scoring import LeadScorer
-    from ..deduplication.lead_deduper import LeadDeduper
-    from ..db.database import AsyncSessionLocal
-    from ..db.models import Company, Contact, LeadScore, PainSignal, OutreachQueue, SystemEvent
+    from scrapers.clutch_scraper import ClutchScraper
+    from scrapers.google_maps_scraper import GoogleMapsScraper
+    from scrapers.email_discovery import EmailDiscovery
+    from pain_scrapers.reddit_scraper import RedditScraper
+    from ai.pain_signal_analyzer import PainSignalAnalyzer
+    from ai.lead_scoring import LeadScorer
+    from deduplication.lead_deduper import LeadDeduper
+    from db.database import AsyncSessionLocal
+    from db.models import Company, Contact, LeadScore, PainSignal, OutreachQueue, SystemEvent
     from datetime import datetime
 
     logger.info("Scrape pipeline started: %s", req.sources)

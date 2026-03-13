@@ -115,7 +115,7 @@ async def _find_matching_sent_email(reply: dict, db):
       3. from_email matches EmailSent.to_email (fallback)
     """
     from sqlalchemy import select
-    from ..db.models import EmailSent
+    from db.models import EmailSent
 
     in_reply_to = reply.get("in_reply_to", "")
     references  = reply.get("references", "")
@@ -153,7 +153,7 @@ async def _find_matching_sent_email(reply: dict, db):
 async def process_reply(reply: dict, db_session) -> Optional[dict]:
     """Process a single inbound reply email."""
     from sqlalchemy import select, update
-    from ..db.models import EmailSent, Response, Contact
+    from db.models import EmailSent, Response, Contact
 
     from_addr   = reply.get("from", "")
     message_id  = reply.get("message_id", "")
