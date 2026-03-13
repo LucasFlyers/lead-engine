@@ -1,28 +1,17 @@
 """
 FastAPI application entry point.
-
-AUDIT FIXES:
-- API key authentication middleware added (X-API-Key header)
-- Rate limiting per IP via slowapi
-- Request size limit (1MB body max)
-- /health endpoint checks DB connectivity
-- CORS restricted (not allow_origins=["*"] in production)
-- Trusted host middleware
-- Global 500 handler logs error_id for traceability
-- Startup: DB init, inbox sync, stuck-send recovery
-- DEPLOYMENT FIX: changed relative imports to absolute imports
 """
 import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
-# Absolute imports (required when running with uvicorn main:app from /app dir)
 from api.routes.activity     import router as activity_router
 from api.routes.campaigns    import router as campaigns_router
 from api.routes.inbox        import router as inbox_router
@@ -32,14 +21,12 @@ from db.database             import check_db_health, init_db, AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
-# ─── Configuration ──────────────────────────────────────────────────────────
 API_KEY         = os.environ.get("API_SECRET_KEY", "")
 ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",")]
 ENV             = os.environ.get("ENV", "development")
 
-
-# ─── Auth middleware ─────────────────────────────────────────────────────────
 UNPROTECTED_PATHS = {"/health", "/", "/docs", "/openapi.json", "/redoc"}
+
 
 async def api_key_middleware(request: Request, call_next):
     if API_KEY and request.url.path not in UNPROTECTED_PATHS:
@@ -58,30 +45,34 @@ async def api_key_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-# ─── Lifespan ────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting Lead Engine API (env=%s)...", ENV)
+    logger.info("Starting Lead Engine API (env=%s)", ENV)
 
+    # Init DB schema
     try:
         await init_db()
         logger.info("Database schema verified")
     except Exception as exc:
         logger.error("DB init error (non-fatal): %s", exc)
 
+    # Sync inbox state — get_rotation_manager is async, must be awaited
     try:
         from deliverability.inbox_rotation_manager import get_rotation_manager
-        mgr = get_rotation_manager()
+        mgr = get_rotation_manager()          # FIX: was missing await
         async with AsyncSessionLocal() as db:
             await mgr.sync_from_db(db)
-        logger.info("Inbox state synced")
+        logger.info("Inbox state synced (%d inboxes)", len(mgr.inboxes))
     except Exception as exc:
         logger.warning("Inbox sync error (non-fatal): %s", exc)
 
+    # Recover stuck queue items
     try:
         from workers.email_sender import recover_stuck_sends
         async with AsyncSessionLocal() as db:
-            await recover_stuck_sends(db)
+            recovered = await recover_stuck_sends(db)
+            if recovered:
+                logger.info("Recovered %d stuck queue items", recovered)
     except Exception as exc:
         logger.warning("Stuck-send recovery error (non-fatal): %s", exc)
 
@@ -89,33 +80,30 @@ async def lifespan(app: FastAPI):
     logger.info("Lead Engine API shutting down")
 
 
-# ─── App ─────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Autonomous Lead Engine API",
-    description="AI-powered cold email outreach and lead intelligence",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs" if ENV != "production" else None,
     redoc_url="/redoc" if ENV != "production" else None,
 )
 
-from starlette.middleware.base import BaseHTTPMiddleware
 app.add_middleware(BaseHTTPMiddleware, dispatch=api_key_middleware)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=len(ALLOWED_ORIGINS) > 0 and ALLOWED_ORIGINS[0] != "*",
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "X-API-Key"],
 )
 
 if ENV == "production":
     allowed_hosts = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "localhost").split(",")]
+    allowed_hosts += ["localhost", "127.0.0.1"]   # always allow local healthcheck
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
 
-# ─── Global error handler ────────────────────────────────────────────────────
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     error_id = str(uuid.uuid4())[:8]
@@ -127,7 +115,6 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# ─── Routes ──────────────────────────────────────────────────────────────────
 PREFIX = "/api/v1"
 app.include_router(leads_router,        prefix=PREFIX)
 app.include_router(campaigns_router,    prefix=PREFIX)

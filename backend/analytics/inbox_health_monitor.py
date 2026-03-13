@@ -76,7 +76,7 @@ async def update_inbox_health(db: AsyncSession, inbox_email: str) -> dict:
         if should_pause and not health_record.is_paused:
             health_record.is_paused = True
             health_record.pause_reason = pause_reason
-            get_rotation_manager().pause_inbox(inbox_email, pause_reason)
+            get_rotation_manager_sync().pause_inbox(inbox_email, pause_reason)
             logger.warning(f"Auto-paused inbox {inbox_email}: {pause_reason}")
     else:
         health_record = InboxHealth(

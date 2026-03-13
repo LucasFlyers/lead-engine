@@ -265,13 +265,11 @@ _rotation_manager: Optional[InboxRotationManager] = None
 _manager_lock = asyncio.Lock()
 
 
-async def get_rotation_manager() -> InboxRotationManager:
-    """Async-safe singleton accessor."""
+def get_rotation_manager() -> InboxRotationManager:
+    """Singleton accessor. Thread-safe for single-process use (Railway)."""
     global _rotation_manager
     if _rotation_manager is None:
-        async with _manager_lock:
-            if _rotation_manager is None:          # double-check
-                _rotation_manager = InboxRotationManager()
+        _rotation_manager = InboxRotationManager()
     return _rotation_manager
 
 

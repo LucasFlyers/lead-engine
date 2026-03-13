@@ -14,7 +14,7 @@ router = APIRouter(prefix="/inbox", tags=["inbox"])
 @router.get("/status")
 async def inbox_status():
     """Get current inbox rotation status."""
-    return {"inboxes": get_rotation_manager().get_status()}
+    return {"inboxes": get_rotation_manager_sync().get_status()}
 
 
 @router.get("/health")
@@ -52,12 +52,12 @@ async def refresh_health(db: AsyncSession = Depends(get_db)):
 @router.post("/{inbox_email}/pause")
 async def pause_inbox(inbox_email: str, reason: str = "Manual pause"):
     """Manually pause an inbox."""
-    get_rotation_manager().pause_inbox(inbox_email, reason)
+    get_rotation_manager_sync().pause_inbox(inbox_email, reason)
     return {"status": "paused", "inbox": inbox_email}
 
 
 @router.post("/{inbox_email}/resume")
 async def resume_inbox(inbox_email: str):
     """Resume a paused inbox."""
-    get_rotation_manager().resume_inbox(inbox_email)
+    get_rotation_manager_sync().resume_inbox(inbox_email)
     return {"status": "resumed", "inbox": inbox_email}
