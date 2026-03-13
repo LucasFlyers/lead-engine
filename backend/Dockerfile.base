@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1.4
+FROM python:3.11-slim AS base
+
+LABEL org.opencontainers.image.source="https://github.com/your-org/lead-engine"
+
+WORKDIR /app
+
+# System dependencies (cached layer — only rebuilds when apt list changes)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+      gcc \
+      libpq-dev \
+      curl \
+      ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python deps (cached layer — only rebuilds when requirements.txt changes)
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir -r requirements.txt
+
+# Non-root user
+RUN addgroup --system --gid 1001 appgroup \
+ && adduser  --system --uid 1001 --ingroup appgroup --no-create-home appuser
+
+# Copy source
+COPY --chown=appuser:appgroup . .
+
+USER appuser

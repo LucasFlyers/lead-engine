@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1.4
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+      gcc libpq-dev curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir -r requirements.txt
+
+RUN addgroup --system --gid 1001 appgroup \
+ && adduser  --system --uid 1001 --ingroup appgroup --no-create-home appuser
+
+COPY --chown=appuser:appgroup . .
+
+USER appuser
+
+# CMD overridden per-service
+CMD ["echo", "No CMD set — override in railway.toml"]

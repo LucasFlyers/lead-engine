@@ -1,0 +1,177 @@
+# ============================================================
+# Railway Project — Lead Engine
+# 8 services: 1 API + 1 frontend + 6 workers
+# ============================================================
+
+# ── backend-api ─────────────────────────────────────────────
+[services.backend-api]
+source = "backend"
+dockerfile = "Dockerfile"
+
+[services.backend-api.build]
+builder = "dockerfile"
+
+[services.backend-api.deploy]
+startCommand = "uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2 --log-level warning --no-access-log"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[services.backend-api.variables]
+ENV                     = "production"
+LOG_JSON                = "true"
+SERVICE_NAME            = "backend-api"
+PORT                    = "8000"
+ALLOWED_ORIGINS         = "${FRONTEND_URL}"
+ALLOWED_HOSTS           = "${RAILWAY_STATIC_URL}"
+LEAD_SCORE_THRESHOLD    = "7"
+AI_CONCURRENCY          = "5"
+EMAIL_DISCOVERY_CONCURRENCY = "5"
+SEND_MIN_DELAY          = "120"
+SEND_MAX_DELAY          = "240"
+
+# ── frontend-dashboard ──────────────────────────────────────
+[services.frontend-dashboard]
+source = "frontend"
+dockerfile = "Dockerfile"
+
+[services.frontend-dashboard.build]
+builder = "dockerfile"
+buildArgs = { NEXT_PUBLIC_API_URL = "$API_URL" }
+
+[services.frontend-dashboard.deploy]
+startCommand = "node server.js"
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[services.frontend-dashboard.variables]
+NODE_ENV               = "production"
+PORT                   = "3000"
+NEXT_TELEMETRY_DISABLED = "1"
+
+# ── lead-scraper-worker ─────────────────────────────────────
+[services.lead-scraper-worker]
+source = "backend"
+dockerfile = "Dockerfile.worker"
+
+[services.lead-scraper-worker.build]
+builder = "dockerfile"
+
+[services.lead-scraper-worker.deploy]
+startCommand = "python -m workers.run_lead_scraper"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[services.lead-scraper-worker.variables]
+ENV                   = "production"
+LOG_JSON              = "true"
+SERVICE_NAME          = "lead-scraper"
+SCRAPE_INTERVAL_HOURS = "6"
+AI_CONCURRENCY        = "3"
+EMAIL_DISCOVERY_CONCURRENCY = "5"
+LEAD_SCORE_THRESHOLD  = "7"
+PLAYWRIGHT_BROWSERS_PATH = "/home/appuser/.cache/ms-playwright"
+
+# ── pain-signal-worker ──────────────────────────────────────
+[services.pain-signal-worker]
+source = "backend"
+dockerfile = "Dockerfile.worker"
+
+[services.pain-signal-worker.build]
+builder = "dockerfile"
+
+[services.pain-signal-worker.deploy]
+startCommand = "python -m workers.run_pain_signal"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[services.pain-signal-worker.variables]
+ENV                  = "production"
+LOG_JSON             = "true"
+SERVICE_NAME         = "pain-signal"
+PAIN_INTERVAL_HOURS  = "8"
+AI_CONCURRENCY       = "3"
+
+# ── email-sender-worker ─────────────────────────────────────
+[services.email-sender-worker]
+source = "backend"
+dockerfile = "Dockerfile.worker-lite"
+
+[services.email-sender-worker.build]
+builder = "dockerfile"
+
+[services.email-sender-worker.deploy]
+startCommand = "python -m workers.run_email_sender"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[services.email-sender-worker.variables]
+ENV                      = "production"
+LOG_JSON                 = "true"
+SERVICE_NAME             = "email-sender"
+EMAIL_INTERVAL_MINUTES   = "30"
+EMAIL_BATCH_SIZE         = "10"
+SEND_MIN_DELAY           = "120"
+SEND_MAX_DELAY           = "240"
+
+# ── reply-monitor-worker ────────────────────────────────────
+[services.reply-monitor-worker]
+source = "backend"
+dockerfile = "Dockerfile.worker-lite"
+
+[services.reply-monitor-worker.build]
+builder = "dockerfile"
+
+[services.reply-monitor-worker.deploy]
+startCommand = "python -m workers.run_reply_monitor"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[services.reply-monitor-worker.variables]
+ENV                              = "production"
+LOG_JSON                         = "true"
+SERVICE_NAME                     = "reply-monitor"
+REPLY_MONITOR_INTERVAL_MINUTES   = "30"
+IMAP_POLL_INTERVAL               = "1800"
+
+# ── analytics-worker ────────────────────────────────────────
+[services.analytics-worker]
+source = "backend"
+dockerfile = "Dockerfile.worker-lite"
+
+[services.analytics-worker.build]
+builder = "dockerfile"
+
+[services.analytics-worker.deploy]
+startCommand = "python -m workers.run_analytics"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[services.analytics-worker.variables]
+ENV                       = "production"
+LOG_JSON                  = "true"
+SERVICE_NAME              = "analytics"
+ANALYTICS_INTERVAL_HOURS  = "1"
+ANALYTICS_NIGHTLY_HOUR    = "2"
+
+# ── deliverability-worker ───────────────────────────────────
+[services.deliverability-worker]
+source = "backend"
+dockerfile = "Dockerfile.worker-lite"
+
+[services.deliverability-worker.build]
+builder = "dockerfile"
+
+[services.deliverability-worker.deploy]
+startCommand = "python -m workers.run_deliverability"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[services.deliverability-worker.variables]
+ENV                             = "production"
+LOG_JSON                        = "true"
+SERVICE_NAME                    = "deliverability"
+DELIVERABILITY_INTERVAL_MINUTES = "60"

@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - INBOX_1_EMAIL=${INBOX_1_EMAIL}
+      - INBOX_1_SMTP_HOST=${INBOX_1_SMTP_HOST}
+      - INBOX_1_SMTP_PORT=${INBOX_1_SMTP_PORT}
+      - INBOX_1_SMTP_PASSWORD=${INBOX_1_SMTP_PASSWORD}
+      - INBOX_1_IMAP_HOST=${INBOX_1_IMAP_HOST}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SCRAPE_INTERVAL_HOURS=6
+      - EMAIL_INTERVAL_MINUTES=30
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: leadengine
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
+volumes:
+  postgres_data:
