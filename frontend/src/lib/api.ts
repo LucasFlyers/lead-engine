@@ -5,7 +5,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || process.env.API_SECRET_KEY || "",
+      "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "",
       ...options?.headers,
     },
     next: { revalidate: 30 },
