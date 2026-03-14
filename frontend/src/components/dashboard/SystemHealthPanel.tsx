@@ -61,14 +61,14 @@ export function SystemHealthPanel() {
   const [lastCheck, setLastCheck] = useState<Date | null>(null);
   const [checking, setChecking] = useState(false);
 
-  // Get API base URL — strip /api/v1 suffix if present
   const getApiBase = () => {
-    const url = process.env.NEXT_PUBLIC_API_URL ?? "";
-    if (!url) {
-      console.warn("NEXT_PUBLIC_API_URL is not set, falling back to localhost");
-      return "http://localhost:8000";
-    }
-    return url.replace(/\/api\/v1\/?$/, "").replace(/\/$/, "");
+    // Try env var first, fall back to hardcoded production URL
+    const envUrl = process.env.NEXT_PUBLIC_API_URL || "";
+    const prodUrl = "https://backend-api-production-a8fb.up.railway.app";
+    const baseUrl = envUrl
+      ? envUrl.replace(/\/api\/v1\/?$/, "").replace(/\/$/, "")
+      : prodUrl;
+    return baseUrl;
   };
 
   const check = async () => {
