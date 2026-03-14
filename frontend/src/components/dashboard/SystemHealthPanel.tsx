@@ -28,10 +28,14 @@ const DEFAULT_SERVICES: ServiceState[] = [
   { name: "Analytics",     key: "analytics",     icon: BarChart3,     status: "unknown" },
 ];
 
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+
 async function fetchHealth(apiBase: string): Promise<ServiceState[]> {
   try {
     const t0 = performance.now();
-    const res = await fetch(`${apiBase}/health`, { cache: "no-store" });
+    const headers: Record<string, string> = {};
+    if (API_KEY) headers["X-API-Key"] = API_KEY;
+    const res = await fetch(`${apiBase}/health`, { cache: "no-store", headers });
     const latency = Math.round(performance.now() - t0);
     const data = await res.json();
 
@@ -60,7 +64,7 @@ export function SystemHealthPanel() {
   // Get API base URL — strip /api/v1 suffix if present
   const getApiBase = () => {
     const url = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
-    return url.replace(/\/api\/v1\/?$/, "");
+    return url.replace(/\/api\/v1\/?$/, "").replace(/\/$/, "");
   };
 
   const check = async () => {
