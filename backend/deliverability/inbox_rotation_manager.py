@@ -104,7 +104,7 @@ class InboxRotationManager:
 
     def _load_from_env(self) -> list[InboxConfig]:
         inboxes: list[InboxConfig] = []
-        inbox_count = int(os.environ.get("INBOX_COUNT", "3"))
+        inbox_count = int(os.environ.get("INBOX_COUNT", "1"))
 
         for i in range(1, inbox_count + 1):
             email_addr = os.environ.get(f"INBOX_{i}_EMAIL", "").strip()
