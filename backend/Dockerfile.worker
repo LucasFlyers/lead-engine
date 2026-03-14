@@ -1,4 +1,3 @@
-# cache-bust-v3
 FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
 
 WORKDIR /app
@@ -6,12 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN addgroup --system --gid 1001 appgroup \
- && adduser --system --uid 1001 --ingroup appgroup --no-create-home appuser
-
-COPY --chown=appuser:appgroup . .
-
-USER appuser
+COPY . .
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
