@@ -1,32 +1,15 @@
 """
-Google Maps / Places scraper — HTTP only, no Playwright required.
-Scrapes business directories that index Google Maps data,
-and also queries the free Overpass/OSM API for businesses.
+Company scraper using Himalayas.app and Remotive APIs — both publicly accessible.
 """
 import asyncio
 import logging
 from datetime import datetime
 from typing import Optional
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse
 
 import httpx
-from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-}
-
-SEARCH_TERMS = [
-    "digital marketing agency",
-    "software development company",
-    "IT consulting firm",
-    "web development agency",
-    "automation company",
-]
 
 
 def extract_domain(url: str) -> Optional[str]:
@@ -36,106 +19,90 @@ def extract_domain(url: str) -> Optional[str]:
         return None
 
 
-async def scrape_yelp_businesses(
-    client: httpx.AsyncClient, term: str, location: str = "United States"
-) -> list[dict]:
-    """Scrape Yelp business listings as Google Maps alternative."""
+async def scrape_himalayas(client: httpx.AsyncClient) -> list[dict]:
+    """Scrape Himalayas.app remote jobs API."""
     companies = []
+    seen = set()
     try:
-        url = f"https://www.yelp.com/search?find_desc={quote(term)}&find_loc={quote(location)}"
-        resp = await client.get(url, headers=HEADERS, timeout=20, follow_redirects=True)
+        resp = await client.get(
+            "https://himalayas.app/jobs/api",
+            headers={"Accept": "application/json"},
+            timeout=20,
+        )
         if resp.status_code != 200:
             return companies
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        cards = soup.select('[class*="businessName"]') or soup.select("h3 a")
-
-        for card in cards[:20]:
-            try:
-                name = card.get_text(strip=True)
-                if not name or len(name) < 3:
-                    continue
-                companies.append({
-                    "company_name": name,
-                    "website": None,
-                    "domain": None,
-                    "location": location,
-                    "industry": "Business Services",
-                    "source": "google_maps",
-                    "scraped_at": datetime.utcnow().isoformat(),
-                })
-            except Exception:
+        data = resp.json()
+        for job in data.get("jobs", [])[:100]:
+            company = job.get("companyName", "")
+            if not company or company in seen:
                 continue
+            seen.add(company)
+            website = job.get("companyUrl", "")
+            companies.append({
+                "company_name": company,
+                "website": website or None,
+                "domain": extract_domain(website) if website else None,
+                "location": job.get("location", "Remote"),
+                "industry": ", ".join(job.get("categories", ["Software"])[:2]),
+                "source": "google_maps",
+                "scraped_at": datetime.utcnow().isoformat(),
+            })
     except Exception as exc:
-        logger.debug("Yelp scrape error for '%s': %s", term, exc)
-
+        logger.debug("Himalayas error: %s", exc)
     return companies
 
 
-async def scrape_yellowpages(
-    client: httpx.AsyncClient, term: str
-) -> list[dict]:
-    """Scrape Yellow Pages as additional business source."""
+async def scrape_remotive(client: httpx.AsyncClient) -> list[dict]:
+    """Scrape Remotive.com jobs API."""
     companies = []
+    seen = set()
     try:
-        url = f"https://www.yellowpages.com/search?search_terms={quote(term)}&geo_location_terms=United+States"
-        resp = await client.get(url, headers=HEADERS, timeout=20, follow_redirects=True)
+        resp = await client.get(
+            "https://remotive.com/api/remote-jobs?limit=100",
+            headers={"Accept": "application/json"},
+            timeout=20,
+        )
         if resp.status_code != 200:
             return companies
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        cards = soup.select(".result")
-
-        for card in cards[:20]:
-            try:
-                name_el = card.select_one(".business-name") or card.select_one("h2")
-                name = name_el.get_text(strip=True) if name_el else None
-                if not name:
-                    continue
-
-                website_el = card.select_one('a.track-visit-website')
-                website = website_el.get("href") if website_el else None
-
-                loc_el = card.select_one(".locality")
-                location = loc_el.get_text(strip=True) if loc_el else None
-
-                companies.append({
-                    "company_name": name,
-                    "website": website,
-                    "domain": extract_domain(website) if website else None,
-                    "location": location,
-                    "industry": "Business Services",
-                    "source": "google_maps",
-                    "scraped_at": datetime.utcnow().isoformat(),
-                })
-            except Exception:
+        data = resp.json()
+        for job in data.get("jobs", []):
+            company = job.get("company_name", "")
+            if not company or company in seen:
                 continue
+            seen.add(company)
+            url = job.get("url", "")
+            companies.append({
+                "company_name": company,
+                "website": url or None,
+                "domain": extract_domain(url) if url else None,
+                "location": "Remote",
+                "industry": job.get("category", "Software"),
+                "source": "google_maps",
+                "scraped_at": datetime.utcnow().isoformat(),
+            })
     except Exception as exc:
-        logger.debug("YellowPages scrape error for '%s': %s", term, exc)
-
+        logger.debug("Remotive error: %s", exc)
     return companies
 
 
 async def scrape_google_maps(max_results: int = 50) -> list[dict]:
-    """Main entry — scrapes business directories as Google Maps proxy."""
+    """Main entry — scrapes remote job boards for company data."""
     all_companies: list[dict] = []
-    seen_names: set[str] = set()
+    seen: set[str] = set()
 
     async with httpx.AsyncClient(timeout=30) as client:
-        for term in SEARCH_TERMS[:3]:
+        for name, fn in [("Himalayas", scrape_himalayas), ("Remotive", scrape_remotive)]:
             try:
-                results = await scrape_yellowpages(client, term)
+                results = await fn(client)
                 for c in results:
-                    name = c["company_name"].lower()
-                    if name not in seen_names:
-                        seen_names.add(name)
+                    key = (c.get("company_name") or "").lower()
+                    if key and key not in seen:
+                        seen.add(key)
                         all_companies.append(c)
-                await asyncio.sleep(2)
+                logger.info("%s: %d companies", name, len(results))
+                await asyncio.sleep(1)
             except Exception as exc:
-                logger.warning("Google Maps proxy scrape failed for '%s': %s", term, exc)
+                logger.warning("%s failed: %s", name, exc)
 
-            if len(all_companies) >= max_results:
-                break
-
-    logger.info("Google Maps scraper (HTTP): %d companies", len(all_companies))
+    logger.info("Google Maps scraper total: %d companies", len(all_companies))
     return all_companies

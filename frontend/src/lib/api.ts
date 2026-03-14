@@ -1,13 +1,27 @@
-// All API calls go through /api/proxy/* which is a server-side Next.js route
-// that adds the API key and forwards to the backend.
-// This avoids all CORS and API key baking issues.
+// Server components need absolute URLs. We point directly at the backend.
+// The API key comes from API_SECRET_KEY (server runtime env var — always available).
+// Client components also work because NEXT_PUBLIC_API_URL is baked at build time.
 
-const API_BASE = "/api/proxy";
+const getApiBase = () => {
+  // On server: process.env.NEXT_PUBLIC_API_URL is set as Railway build arg
+  // Fallback to direct backend URL
+  return process.env.NEXT_PUBLIC_API_URL
+    || (process.env.BACKEND_URL ? process.env.BACKEND_URL + "/api/v1" : null)
+    || "http://localhost:8000/api/v1";
+};
+
+const getApiKey = () =>
+  process.env.API_SECRET_KEY || process.env.NEXT_PUBLIC_API_KEY || "";
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const base = getApiBase();
+  const res = await fetch(`${base}${path}`, {
     ...options,
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": getApiKey(),
+      ...options?.headers,
+    },
     next: { revalidate: 30 },
   });
   if (!res.ok) throw new Error(`API error ${res.status}: ${path}`);
