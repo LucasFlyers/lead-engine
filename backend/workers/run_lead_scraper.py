@@ -8,6 +8,8 @@ import logging
 import os
 import time
 
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/ms-playwright")
+
 from db.database import AsyncSessionLocal, init_db
 from utils.logging import configure_logging
 
