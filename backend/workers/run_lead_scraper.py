@@ -1,3 +1,6 @@
+import os
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/ms-playwright"
+
 """
 Lead Scraper Worker
 Runs: scraping pipeline (Clutch, Google Maps, agency directories)
@@ -5,10 +8,7 @@ Schedule: every SCRAPE_INTERVAL_HOURS (default 6h)
 """
 import asyncio
 import logging
-import os
 import time
-
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/ms-playwright")
 
 from db.database import AsyncSessionLocal, init_db
 from utils.logging import configure_logging

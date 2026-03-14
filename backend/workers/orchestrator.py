@@ -1,3 +1,6 @@
+import os
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/ms-playwright"
+
 """
 Main orchestration worker — coordinates all pipeline stages.
 
@@ -12,7 +15,6 @@ AUDIT FIXES:
 """
 import asyncio
 import logging
-import os
 import time
 from datetime import datetime
 
