@@ -88,7 +88,7 @@ export function CampaignAnalyticsPanel({
             {industries.slice(0, 5).map((ind, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 11, color: "var(--text-4)", width: 16, fontFamily: "monospace" }}>{i + 1}</span>
-                <span style={{ flex: 1, fontSize: 12.5, color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ind.industry}</span>
+                <span style={{ flex: 1, fontSize: 12.5, color: "var(--text-2)", truncate: true }}>{ind.industry}</span>
                 <span className="badge badge-accent" style={{ fontSize: 10.5 }}>{ind.reply_rate?.toFixed(1)}%</span>
                 <span style={{ fontSize: 11, color: "var(--text-4)" }}>{ind.sent} sent</span>
               </div>

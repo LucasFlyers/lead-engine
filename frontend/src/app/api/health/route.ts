@@ -1,17 +1,20 @@
 import { NextResponse } from "next/server";
 
-export async function GET() {
-  const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
-  const base = backendUrl.replace(/\/api\/v1\/?$/, "").replace(/\/$/, "");
+const BACKEND = process.env.BACKEND_URL || "http://localhost:8000";
+const API_KEY = process.env.API_SECRET_KEY || "";
 
+export async function GET() {
   try {
-    const res = await fetch(`${base}/health`, {
-      headers: { "X-API-Key": process.env.API_SECRET_KEY || "" },
+    const res = await fetch(`${BACKEND}/health`, {
+      headers: { "X-API-Key": API_KEY },
       cache: "no-store",
     });
     const data = await res.json();
     return NextResponse.json(data);
   } catch {
-    return NextResponse.json({ status: "error", database: "unreachable" }, { status: 503 });
+    return NextResponse.json(
+      { status: "error", database: "unreachable" },
+      { status: 503 }
+    );
   }
 }

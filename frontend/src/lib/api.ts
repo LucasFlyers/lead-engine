@@ -1,9 +1,13 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+// All API calls go through /api/proxy/* which is a server-side Next.js route
+// that adds the API key and forwards to the backend.
+// This avoids all CORS and API key baking issues.
+
+const API_BASE = "/api/proxy";
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
-    headers: { "Content-Type": "application/json", "X-API-Key": process.env.API_SECRET_KEY || process.env.NEXT_PUBLIC_API_KEY || "", ...options?.headers },
+    headers: { "Content-Type": "application/json", ...options?.headers },
     next: { revalidate: 30 },
   });
   if (!res.ok) throw new Error(`API error ${res.status}: ${path}`);

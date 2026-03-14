@@ -28,10 +28,11 @@ const DEFAULT_SERVICES: ServiceState[] = [
   { name: "Analytics",     key: "analytics",     icon: BarChart3,     status: "unknown" },
 ];
 
-async function fetchHealth(apiBase: string): Promise<ServiceState[]> {
+async function fetchHealth(): Promise<ServiceState[]> {
   try {
     const t0 = performance.now();
-    const res = await fetch(`${apiBase}/health`, { cache: "no-store" });
+    // Use /api/health proxy — no env var needed, runs server-side
+    const res = await fetch("/api/health", { cache: "no-store" });
     const latency = Math.round(performance.now() - t0);
     const data = await res.json();
 
@@ -39,12 +40,11 @@ async function fetchHealth(apiBase: string): Promise<ServiceState[]> {
       if (svc.key === "database") {
         return {
           ...svc,
-          status: data.database === "connected" ? "healthy" : "down",
+          status: data.database === "connected" ? "healthy" : "down" as ServiceStatus,
           detail: data.database === "connected" ? "Connected" : "Unreachable",
           latencyMs: latency,
         };
       }
-      // If API responded, other services are reachable
       return { ...svc, status: "healthy" as ServiceStatus, detail: "Reachable", latencyMs: latency };
     });
   } catch {
@@ -57,15 +57,9 @@ export function SystemHealthPanel() {
   const [lastCheck, setLastCheck] = useState<Date | null>(null);
   const [checking, setChecking] = useState(false);
 
-  // Get API base URL — strip /api/v1 suffix if present
-  const getApiBase = () => {
-    const url = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
-    return url.replace(/\/api\/v1\/?$/, "");
-  };
-
   const check = async () => {
     setChecking(true);
-    const result = await fetchHealth(getApiBase());
+    const result = await fetchHealth();
     setServices(result);
     setLastCheck(new Date());
     setChecking(false);
@@ -95,7 +89,6 @@ export function SystemHealthPanel() {
           <button
             onClick={check}
             disabled={checking}
-            title="Refresh health checks"
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 28, height: 28, borderRadius: 7,
