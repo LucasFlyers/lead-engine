@@ -72,6 +72,11 @@ INDUSTRY: {industry}
 HOMEPAGE CONTENT (truncated):
 {content}
 
+IMPORTANT: If homepage content is missing or sparse, score based on company name and
+industry alone. Software, tech, marketing, consulting, and agency companies should
+default to 6-7 if no strong negative signals exist. Only score below 5 if the company
+is clearly a poor fit (consumer app, enterprise giant, or freelancer).
+
 Return ONLY valid JSON — no markdown, no explanation outside the JSON:
 {{
   "industry": "<refined industry>",
@@ -84,8 +89,8 @@ Return ONLY valid JSON — no markdown, no explanation outside the JSON:
 
 Scoring guide:
 8-10 → Clear automation pain, active B2B service company, manual processes evident
-6-7  → Some potential, less obvious need
-1-5  → Poor fit (consumer, fully automated, freelancer, enterprise tech giant)
+6-7  → Software/tech/agency company, limited data but plausible fit — DEFAULT for sparse data
+1-5  → Poor fit (consumer app, fully automated platform, solo freelancer, enterprise tech giant)
 """
 
 
@@ -159,9 +164,11 @@ def _parse_ai_response(raw: str, company_name: str) -> Optional[dict]:
 
     # Validate required fields
     score = result.get("lead_score")
+    if score is None or score == 0:
+        score = 5  # default for companies with insufficient data
     if not isinstance(score, (int, float)) or not (1 <= score <= 10):
-        logger.warning("Invalid lead_score %r for %r", score, company_name)
-        return None
+        logger.warning("Invalid lead_score %r for %r — using default 5", score, company_name)
+        score = 5
 
     return {
         "score": int(score),
