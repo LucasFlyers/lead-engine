@@ -28,27 +28,16 @@ const DEFAULT_SERVICES: ServiceState[] = [
   { name: "Analytics",     key: "analytics",     icon: BarChart3,     status: "unknown" },
 ];
 
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
-
-async function fetchHealth(apiBase: string): Promise<ServiceState[]> {
+async function fetchHealth(): Promise<ServiceState[]> {
   try {
     const t0 = performance.now();
-    const headers: Record<string, string> = {};
-    if (API_KEY) headers["X-API-Key"] = API_KEY;
-    const res = await fetch(`${apiBase}/health`, { cache: "no-store", headers });
+    const res = await fetch("/api/health", { cache: "no-store" });
     const latency = Math.round(performance.now() - t0);
     const data = await res.json();
-
     return DEFAULT_SERVICES.map(svc => {
       if (svc.key === "database") {
-        return {
-          ...svc,
-          status: data.database === "connected" ? "healthy" : "down",
-          detail: data.database === "connected" ? "Connected" : "Unreachable",
-          latencyMs: latency,
-        };
+        return { ...svc, status: data.database === "connected" ? "healthy" : "down" as ServiceStatus, detail: data.database === "connected" ? "Connected" : "Unreachable", latencyMs: latency };
       }
-      // If API responded, other services are reachable
       return { ...svc, status: "healthy" as ServiceStatus, detail: "Reachable", latencyMs: latency };
     });
   } catch {
@@ -61,19 +50,9 @@ export function SystemHealthPanel() {
   const [lastCheck, setLastCheck] = useState<Date | null>(null);
   const [checking, setChecking] = useState(false);
 
-  const getApiBase = () => {
-    // Try env var first, fall back to hardcoded production URL
-    const envUrl = process.env.NEXT_PUBLIC_API_URL || "";
-    const prodUrl = "https://backend-api-production-a8fb.up.railway.app";
-    const baseUrl = envUrl
-      ? envUrl.replace(/\/api\/v1\/?$/, "").replace(/\/$/, "")
-      : prodUrl;
-    return baseUrl;
-  };
-
   const check = async () => {
     setChecking(true);
-    const result = await fetchHealth(getApiBase());
+    const result = await fetchHealth();
     setServices(result);
     setLastCheck(new Date());
     setChecking(false);
