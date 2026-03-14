@@ -1,12 +1,11 @@
 import os
 import subprocess
 
-# Ensure Playwright browsers are installed at runtime
-browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/ms-playwright")
-os.environ["PLAYWRIGHT_BROWSERS_PATH"] = browsers_path
-chrome = os.path.join(browsers_path, "chromium-1117/chrome-linux/chrome")
-if not os.path.exists(chrome):
-    subprocess.run(["playwright", "install", "chromium"], check=False)
+# Use /tmp for runtime Playwright install since container runs as non-root
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/tmp/ms-playwright")
+chrome_path = os.path.join(os.environ["PLAYWRIGHT_BROWSERS_PATH"], "chromium-1117/chrome-linux/chrome")
+if not os.path.exists(chrome_path):
+    subprocess.run(["playwright", "install", "chromium"], check=False, capture_output=True)
 
 """
 Main orchestration worker — coordinates all pipeline stages.
