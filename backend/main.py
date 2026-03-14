@@ -56,10 +56,10 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("DB init error (non-fatal): %s", exc)
 
-    # Sync inbox state — get_rotation_manager is async, must be awaited
+    # Sync inbox state from DB on startup
     try:
         from deliverability.inbox_rotation_manager import get_rotation_manager
-        mgr = get_rotation_manager()          # FIX: was missing await
+        mgr = get_rotation_manager()
         async with AsyncSessionLocal() as db:
             await mgr.sync_from_db(db)
         logger.info("Inbox state synced (%d inboxes)", len(mgr.inboxes))

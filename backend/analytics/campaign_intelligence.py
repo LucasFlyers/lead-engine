@@ -196,3 +196,62 @@ async def get_campaign_summary(db: AsyncSession, days: int = 30) -> dict:
         "reply_rate": round(total_replies / total_sent * 100, 2) if total_sent else 0,
         "positive_rate": round(interested / total_sent * 100, 2) if total_sent else 0,
     }
+
+
+async def update_campaign_metrics(db, full_rebuild: bool = False) -> int:
+    """
+    Aggregate daily metrics into campaign_metrics table.
+    Called by analytics worker — safe to run repeatedly (upsert logic).
+    """
+    from datetime import date, timedelta
+    from sqlalchemy import select, and_
+    from db.models import CampaignMetrics
+
+    days_back = 90 if full_rebuild else 3
+    results = 0
+
+    for i in range(days_back - 1, -1, -1):
+        target_date = date.today() - timedelta(days=i)
+        try:
+            metrics = await compute_daily_metrics(db, target_date)
+
+            existing = await db.execute(
+                select(CampaignMetrics).where(
+                    and_(
+                        CampaignMetrics.date == target_date,
+                        CampaignMetrics.inbox == None,
+                    )
+                )
+            )
+            rec = existing.scalar_one_or_none()
+
+            if rec:
+                rec.emails_sent     = metrics["emails_sent"]
+                rec.bounces         = metrics["bounces"]
+                rec.spam_complaints = metrics["spam_complaints"]
+                rec.replies         = metrics["replies"]
+                rec.interested      = metrics["interested"]
+                rec.not_interested  = metrics["not_interested"]
+                rec.unsubscribes    = metrics["unsubscribes"]
+                rec.reply_rate      = metrics["reply_rate"]
+                rec.positive_rate   = metrics["positive_rate"]
+            else:
+                db.add(CampaignMetrics(
+                    date            = target_date,
+                    emails_sent     = metrics["emails_sent"],
+                    bounces         = metrics["bounces"],
+                    spam_complaints = metrics["spam_complaints"],
+                    replies         = metrics["replies"],
+                    interested      = metrics["interested"],
+                    not_interested  = metrics["not_interested"],
+                    unsubscribes    = metrics["unsubscribes"],
+                    reply_rate      = metrics["reply_rate"],
+                    positive_rate   = metrics["positive_rate"],
+                ))
+            results += 1
+        except Exception as exc:
+            logger.warning("Failed to update metrics for %s: %s", target_date, exc)
+
+    await db.commit()
+    logger.info("Campaign metrics updated: %d days processed", results)
+    return results

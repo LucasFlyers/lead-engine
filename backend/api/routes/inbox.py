@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
 from db.models import InboxHealth
-from deliverability.inbox_rotation_manager import get_rotation_manager
+from deliverability.inbox_rotation_manager import get_rotation_manager, get_rotation_manager_sync
 from analytics.inbox_health_monitor import check_all_inbox_health
 
 router = APIRouter(prefix="/inbox", tags=["inbox"])
