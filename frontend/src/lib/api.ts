@@ -1,16 +1,9 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
-const getApiKey = () =>
-  process.env.API_SECRET_KEY || process.env.NEXT_PUBLIC_API_KEY || "";
-
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-Key": getApiKey(),
-      ...options?.headers,
-    },
+    headers: { "Content-Type": "application/json", "X-API-Key": process.env.API_SECRET_KEY || process.env.NEXT_PUBLIC_API_KEY || "", ...options?.headers },
     next: { revalidate: 30 },
   });
   if (!res.ok) throw new Error(`API error ${res.status}: ${path}`);

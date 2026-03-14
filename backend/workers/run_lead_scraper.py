@@ -1,12 +1,3 @@
-import os
-import subprocess
-
-# Use /tmp for runtime Playwright install since container runs as non-root
-os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/tmp/ms-playwright")
-chrome_path = os.path.join(os.environ["PLAYWRIGHT_BROWSERS_PATH"], "chromium-1117/chrome-linux/chrome")
-if not os.path.exists(chrome_path):
-    subprocess.run(["playwright", "install", "chromium"], check=False, capture_output=True)
-
 """
 Lead Scraper Worker
 Runs: scraping pipeline (Clutch, Google Maps, agency directories)
@@ -14,6 +5,7 @@ Schedule: every SCRAPE_INTERVAL_HOURS (default 6h)
 """
 import asyncio
 import logging
+import os
 import time
 
 from db.database import AsyncSessionLocal, init_db

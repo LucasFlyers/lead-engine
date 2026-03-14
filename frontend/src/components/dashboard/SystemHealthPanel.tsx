@@ -28,16 +28,23 @@ const DEFAULT_SERVICES: ServiceState[] = [
   { name: "Analytics",     key: "analytics",     icon: BarChart3,     status: "unknown" },
 ];
 
-async function fetchHealth(): Promise<ServiceState[]> {
+async function fetchHealth(apiBase: string): Promise<ServiceState[]> {
   try {
     const t0 = performance.now();
-    const res = await fetch("/api/health", { cache: "no-store" });
+    const res = await fetch(`${apiBase}/health`, { cache: "no-store" });
     const latency = Math.round(performance.now() - t0);
     const data = await res.json();
+
     return DEFAULT_SERVICES.map(svc => {
       if (svc.key === "database") {
-        return { ...svc, status: data.database === "connected" ? "healthy" : "down" as ServiceStatus, detail: data.database === "connected" ? "Connected" : "Unreachable", latencyMs: latency };
+        return {
+          ...svc,
+          status: data.database === "connected" ? "healthy" : "down",
+          detail: data.database === "connected" ? "Connected" : "Unreachable",
+          latencyMs: latency,
+        };
       }
+      // If API responded, other services are reachable
       return { ...svc, status: "healthy" as ServiceStatus, detail: "Reachable", latencyMs: latency };
     });
   } catch {
@@ -50,9 +57,15 @@ export function SystemHealthPanel() {
   const [lastCheck, setLastCheck] = useState<Date | null>(null);
   const [checking, setChecking] = useState(false);
 
+  // Get API base URL — strip /api/v1 suffix if present
+  const getApiBase = () => {
+    const url = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+    return url.replace(/\/api\/v1\/?$/, "");
+  };
+
   const check = async () => {
     setChecking(true);
-    const result = await fetchHealth();
+    const result = await fetchHealth(getApiBase());
     setServices(result);
     setLastCheck(new Date());
     setChecking(false);

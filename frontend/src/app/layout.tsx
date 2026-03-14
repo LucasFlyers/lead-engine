@@ -4,7 +4,7 @@ import { Providers } from "@/providers";
 
 export const metadata: Metadata = {
   title: "LeadEngine — Autonomous Outreach",
-  description: "AI-powered cold email outreach and lead intelligence dashboard - v2",
+  description: "AI-powered cold email outreach and lead intelligence dashboard",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
