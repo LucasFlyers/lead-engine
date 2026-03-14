@@ -1,25 +1,12 @@
-// Server components need absolute URLs. We point directly at the backend.
-// The API key comes from API_SECRET_KEY (server runtime env var — always available).
-// Client components also work because NEXT_PUBLIC_API_URL is baked at build time.
-
-const getApiBase = () => {
-  // On server: process.env.NEXT_PUBLIC_API_URL is set as Railway build arg
-  // Fallback to direct backend URL
-  return process.env.NEXT_PUBLIC_API_URL
-    || (process.env.BACKEND_URL ? process.env.BACKEND_URL + "/api/v1" : null)
-    || "http://localhost:8000/api/v1";
-};
-
-const getApiKey = () =>
-  process.env.API_SECRET_KEY || process.env.NEXT_PUBLIC_API_KEY || "";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+const API_KEY = process.env.API_SECRET_KEY || process.env.NEXT_PUBLIC_API_KEY || "";
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const base = getApiBase();
-  const res = await fetch(`${base}${path}`, {
+  const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      "X-API-Key": getApiKey(),
+      "X-API-Key": API_KEY,
       ...options?.headers,
     },
     next: { revalidate: 30 },

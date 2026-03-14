@@ -91,6 +91,7 @@ Scoring guide:
 
 def _sanitise_for_prompt(text: str, max_len: int = 200) -> str:
     """Strip characters that could break prompt formatting or inject instructions."""
+    text = str(text or "")
     # Remove null bytes, control characters, curly braces (would break .format())
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     text = text.replace("{", "[").replace("}", "]")
