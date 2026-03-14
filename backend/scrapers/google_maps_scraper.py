@@ -5,8 +5,6 @@ from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
 
-from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeout
-
 logger = logging.getLogger(__name__)
 
 SEARCH_QUERIES = [
@@ -25,8 +23,9 @@ def extract_domain(url: str) -> Optional[str]:
         return None
 
 
-async def scrape_google_maps_query(page: Page, query: str, location: str = "United States") -> list[dict]:
+async def scrape_google_maps_query(page, query: str, location: str = "United States") -> list[dict]:
     """Scrape Google Maps for a specific search query."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeout
     companies = []
     search_url = f"https://www.google.com/maps/search/{query.replace(' ', '+')}+{location.replace(' ', '+')}"
 
@@ -82,23 +81,29 @@ async def scrape_google_maps(locations: list[str] = None) -> list[dict]:
     if locations is None:
         locations = ["New York", "San Francisco", "Chicago", "Austin", "Boston"]
 
-    all_companies = []
+    try:
+        from playwright.async_api import async_playwright
+        all_companies = []
 
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-        )
-        page = await context.new_page()
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+            )
+            page = await context.new_page()
 
-        for query in SEARCH_QUERIES:
-            for location in locations[:3]:
-                logger.info(f"Scraping Maps: {query} in {location}")
-                companies = await scrape_google_maps_query(page, query, location)
-                all_companies.extend(companies)
-                await asyncio.sleep(3)
+            for query in SEARCH_QUERIES:
+                for location in locations[:3]:
+                    logger.info(f"Scraping Maps: {query} in {location}")
+                    companies = await scrape_google_maps_query(page, query, location)
+                    all_companies.extend(companies)
+                    await asyncio.sleep(3)
 
-        await browser.close()
+            await browser.close()
 
-    logger.info(f"Google Maps scraper: found {len(all_companies)} companies")
-    return all_companies
+        logger.info(f"Google Maps scraper: found {len(all_companies)} companies")
+        return all_companies
+
+    except Exception as e:
+        logger.warning(f"Playwright unavailable for Google Maps scraper ({e}), skipping")
+        return []

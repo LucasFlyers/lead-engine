@@ -6,8 +6,6 @@ from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
 
-from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeout
-
 logger = logging.getLogger(__name__)
 
 CLUTCH_BASE = "https://clutch.co"
@@ -28,8 +26,9 @@ def extract_domain(url: str) -> Optional[str]:
         return None
 
 
-async def scrape_clutch_page(page: Page, url: str) -> list[dict]:
-    """Scrape a single Clutch listing page."""
+async def scrape_clutch_page(page, url: str) -> list[dict]:
+    """Scrape a single Clutch listing page using a Playwright page object."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeout
     companies = []
     try:
         await page.goto(url, wait_until="networkidle", timeout=30000)
@@ -71,28 +70,77 @@ async def scrape_clutch_page(page: Page, url: str) -> list[dict]:
     return companies
 
 
+async def _scrape_clutch_httpx(max_pages: int = 5) -> list[dict]:
+    """HTTP-only fallback scraper for when Playwright is unavailable."""
+    import httpx
+
+    all_companies = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+    }
+
+    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20) as client:
+        for category in CATEGORIES[:2]:
+            for pg in range(1, min(max_pages, 3) + 1):
+                url = f"{CLUTCH_BASE}{category}?page={pg}"
+                try:
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        break
+                    names = re.findall(
+                        r'class="company_info"[^>]*>.*?<h3[^>]*>(.*?)</h3>',
+                        resp.text, re.DOTALL
+                    )
+                    for name in names[:20]:
+                        clean = re.sub(r'<[^>]+>', '', name).strip()
+                        if clean:
+                            all_companies.append({
+                                "company_name": clean,
+                                "website": None,
+                                "domain": None,
+                                "industry": "Agency",
+                                "location": None,
+                                "source": "clutch",
+                                "scraped_at": datetime.utcnow().isoformat(),
+                            })
+                    await asyncio.sleep(2)
+                except Exception as e:
+                    logger.warning(f"HTTP fallback error for {url}: {e}")
+
+    return all_companies
+
+
 async def scrape_clutch(max_pages: int = 5) -> list[dict]:
     """Main entry point to scrape Clutch directories."""
-    all_companies = []
+    try:
+        from playwright.async_api import async_playwright
+        all_companies = []
 
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-        )
-        page = await context.new_page()
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+            )
+            page = await context.new_page()
 
-        for category in CATEGORIES:
-            for pg in range(1, max_pages + 1):
-                url = f"{CLUTCH_BASE}{category}?page={pg}"
-                logger.info(f"Scraping Clutch: {url}")
-                companies = await scrape_clutch_page(page, url)
-                all_companies.extend(companies)
-                if not companies:
-                    break
-                await asyncio.sleep(2)
+            for category in CATEGORIES:
+                for pg in range(1, max_pages + 1):
+                    url = f"{CLUTCH_BASE}{category}?page={pg}"
+                    logger.info(f"Scraping Clutch: {url}")
+                    companies = await scrape_clutch_page(page, url)
+                    all_companies.extend(companies)
+                    if not companies:
+                        break
+                    await asyncio.sleep(2)
 
-        await browser.close()
+            await browser.close()
 
-    logger.info(f"Clutch scraper: found {len(all_companies)} companies")
-    return all_companies
+        logger.info(f"Clutch scraper: found {len(all_companies)} companies")
+        return all_companies
+
+    except Exception as e:
+        logger.warning(f"Playwright unavailable ({e}), falling back to HTTP scraping")
+        companies = await _scrape_clutch_httpx(max_pages)
+        logger.info(f"Clutch HTTP fallback: found {len(companies)} companies")
+        return companies
