@@ -63,7 +63,11 @@ export function SystemHealthPanel() {
 
   // Get API base URL — strip /api/v1 suffix if present
   const getApiBase = () => {
-    const url = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+    const url = process.env.NEXT_PUBLIC_API_URL ?? "";
+    if (!url) {
+      console.warn("NEXT_PUBLIC_API_URL is not set, falling back to localhost");
+      return "http://localhost:8000";
+    }
     return url.replace(/\/api\/v1\/?$/, "").replace(/\/$/, "");
   };
 
