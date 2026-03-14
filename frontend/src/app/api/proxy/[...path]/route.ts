@@ -20,7 +20,7 @@ async function handler(req: NextRequest, { params }: { params: { path: string[] 
     });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
-  } catch (err) {
+  } catch {
     return NextResponse.json({ error: "Backend unreachable" }, { status: 503 });
   }
 }

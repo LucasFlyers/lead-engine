@@ -59,7 +59,7 @@ async def run_scraping_pipeline() -> None:
     # --- Collect from all sources ---
     all_companies: list[dict] = []
     for name, coro in [
-        ("Clutch",            scrape_clutch(max_pages=3)),
+        ("Clutch",            scrape_clutch()),
         ("Google Maps",       scrape_google_maps()),
         ("Agency directories",scrape_agency_directories()),
     ]:
