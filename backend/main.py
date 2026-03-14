@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -19,6 +18,11 @@ from api.routes.leads        import router as leads_router
 from api.routes.pain_signals import router as pain_signals_router
 from db.database             import check_db_health, init_db, AsyncSessionLocal
 
+# Configure basic logging immediately so startup errors are visible
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 API_KEY         = os.environ.get("API_SECRET_KEY", "")
@@ -29,7 +33,10 @@ UNPROTECTED_PATHS = {"/health", "/", "/docs", "/openapi.json", "/redoc"}
 
 
 async def api_key_middleware(request: Request, call_next):
-    if API_KEY and request.url.path not in UNPROTECTED_PATHS:
+    # Always let health check through regardless of API key
+    if request.url.path in UNPROTECTED_PATHS:
+        return await call_next(request)
+    if API_KEY:
         provided = request.headers.get("X-API-Key", "")
         if not provided:
             return JSONResponse(
@@ -47,35 +54,33 @@ async def api_key_middleware(request: Request, call_next):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting Lead Engine API (env=%s)", ENV)
+    logger.info("=== Lead Engine API starting (env=%s) ===", ENV)
 
-    # Init DB schema
     try:
         await init_db()
-        logger.info("Database schema verified")
+        logger.info("✓ Database schema verified")
     except Exception as exc:
         logger.error("DB init error (non-fatal): %s", exc)
 
-    # Sync inbox state from DB on startup
     try:
         from deliverability.inbox_rotation_manager import get_rotation_manager
         mgr = get_rotation_manager()
         async with AsyncSessionLocal() as db:
             await mgr.sync_from_db(db)
-        logger.info("Inbox state synced (%d inboxes)", len(mgr.inboxes))
+        logger.info("✓ Inbox state synced (%d inboxes)", len(mgr.inboxes))
     except Exception as exc:
         logger.warning("Inbox sync error (non-fatal): %s", exc)
 
-    # Recover stuck queue items
     try:
         from workers.email_sender import recover_stuck_sends
         async with AsyncSessionLocal() as db:
             recovered = await recover_stuck_sends(db)
             if recovered:
-                logger.info("Recovered %d stuck queue items", recovered)
+                logger.info("✓ Recovered %d stuck queue items", recovered)
     except Exception as exc:
         logger.warning("Stuck-send recovery error (non-fatal): %s", exc)
 
+    logger.info("=== API startup complete — serving requests ===")
     yield
     logger.info("Lead Engine API shutting down")
 
@@ -84,24 +89,24 @@ app = FastAPI(
     title="Autonomous Lead Engine API",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url="/docs" if ENV != "production" else None,
-    redoc_url="/redoc" if ENV != "production" else None,
+    # Show docs in all envs for now — helps with debugging
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 app.add_middleware(BaseHTTPMiddleware, dispatch=api_key_middleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=len(ALLOWED_ORIGINS) > 0 and ALLOWED_ORIGINS[0] != "*",
+    allow_origins=["*"],   # tighten after first successful deploy
+    allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "X-API-Key"],
 )
 
-if ENV == "production":
-    allowed_hosts = [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "localhost").split(",")]
-    allowed_hosts += ["localhost", "127.0.0.1"]   # always allow local healthcheck
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+# NOTE: TrustedHostMiddleware REMOVED — it blocks Railway's health checker
+# which sends requests with Railway's internal hostname. Re-add after
+# confirmed working if needed.
 
 
 @app.exception_handler(Exception)
@@ -125,6 +130,7 @@ app.include_router(activity_router,     prefix=PREFIX)
 
 @app.get("/health", tags=["system"])
 async def health():
+    """Health check — always responds, even if DB is down."""
     db_ok = await check_db_health()
     return {
         "status":   "ok" if db_ok else "degraded",
