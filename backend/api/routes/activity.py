@@ -32,7 +32,7 @@ async def activity_feed(
                 "entity_type": e.entity_type,
                 "entity_id": str(e.entity_id) if e.entity_id else None,
                 "message": e.message,
-                "metadata": e.metadata,
+                "metadata": e.event_metadata,
                 "created_at": e.created_at.isoformat(),
             }
             for e in events

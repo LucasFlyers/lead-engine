@@ -33,7 +33,7 @@ EMAIL_DISCOVERY_CONCURRENCY = int(os.environ.get("EMAIL_DISCOVERY_CONCURRENCY", 
 #  Helpers
 # --------------------------------------------------------------------------- #
 async def _log_event(db, event_type: str, message: str, metadata: dict = None) -> None:
-    event = SystemEvent(event_type=event_type, message=message, metadata=metadata or {})
+    event = SystemEvent(event_type=event_type, message=message, event_metadata=metadata or {})
     db.add(event)
     await db.commit()
 
