@@ -161,6 +161,10 @@ async def run_scraping_pipeline() -> None:
                     queued = True
 
             saved_count += 1
+            await _log_event(
+                db, "lead_scraped",
+                f"New lead: {company_data['company_name']} (source: {company_data['source']})",
+            )
 
         await db.commit()
         await _log_event(
@@ -228,6 +232,10 @@ async def run_pain_signal_pipeline() -> None:
                 processed        = True,
             ))
             new_signals += 1
+            await _log_event(
+                db, "pain_signal_found",
+                f"Pain signal from {signal['source']}: {signal['content'][:80]}…",
+            )
 
         await db.commit()
 

@@ -47,11 +47,12 @@ async def scrape_remoteok(client: httpx.AsyncClient) -> list[dict]:
             if not company or company in seen:
                 continue
             seen.add(company)
-            url = job.get("url", "")
+            # Use company_url (homepage) not url (job posting)
+            website = job.get("company_url") or job.get("company_website") or None
             companies.append({
                 "company_name": company,
-                "website": url or None,
-                "domain": extract_domain(url) if url else None,
+                "website": website,
+                "domain": extract_domain(website) if website else None,
                 "location": "Remote",
                 "industry": job.get("tags", ["Software"])[0] if job.get("tags") else "Software",
                 "source": "clutch",
@@ -90,10 +91,10 @@ async def scrape_weworkremotely(client: httpx.AsyncClient) -> list[dict]:
                     if not company or company in seen or len(company) < 2:
                         continue
                     seen.add(company)
-                    link = item.find("link")
+                    # WWR RSS has no company homepage — leave website blank
                     companies.append({
                         "company_name": company,
-                        "website": link.get_text() if link else None,
+                        "website": None,
                         "domain": None,
                         "location": "Remote",
                         "industry": "Software & Technology",

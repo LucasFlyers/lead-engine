@@ -32,25 +32,31 @@ Respond ONLY with valid JSON in this exact structure:
   "reasoning": "string (1-2 sentences explaining your score)"
 }}
 
-Scoring criteria:
-- 8-10: Business owner/operator expressing frustration with manual processes, wasted time on repetitive tasks, asking how to automate a specific workflow, mentions specific processes (invoicing, reporting, data entry, CRM, scheduling). HIGH SCORE.
-- 6-7: Business context with some automation need but less specific or urgent.
-- 1-5: Off-topic, consumer question, or any of the following DISQUALIFIERS.
+Scoring criteria — use EXACTLY these tiers:
 
-DISQUALIFIERS — score 1-3 for:
-- Posts sharing automation success stories ("we automated X and saved Y hours")
-- Promoting or reviewing AI/automation tools or products
-- Tutorial or how-to content about building automations
-- Marketing or promotional content
-- Developer discussing technical implementation
-- No clear business operational pain expressed
+Score 1-3 (disqualify immediately):
+- Content creators or developers showing off tools they built
+- Automation success stories ("we automated X and saved Y hours")
+- Product launches or tool promotions
+- Tutorials, how-to guides, "here's how I automated X"
+- Listicles or roundup articles
+- No clear operational pain from a real business
 
-BOOST SCORE for:
-- Frustration language: "tired of", "sick of", "it takes forever", "wasting hours"
-- Business owner or operations role mentioned
-- Specific manual process named (invoicing, spreadsheet reports, data entry, CRM updates)
-- Small or medium business context (not enterprise, not solo hobby project)
-- Asking for help or recommendations to solve a workflow problem
+Score 4-6 (marginal — general questions, vague frustration):
+- General questions about automation without specific business context
+- Vague frustration without a named process or cost
+- Student or hobbyist context
+- Enterprise company where software budget is not a concern
+
+Score 7-10 (qualified lead — active business pain):
+- Business owner or operator (ops, finance, admin, sales, HR) expressing ACTIVE pain
+- Specific manual process named: invoicing, reporting, data entry, CRM updates, scheduling, payroll, inventory, onboarding, order processing
+- Mentions time cost ("3 hours every week", "my team spends all day")
+- Mentions cost frustration ("can't afford", "too expensive", "no budget")
+- Asking for software recommendations or "how do I automate X"
+- Small or medium business context (not solo hobby, not Fortune 500)
+
+Only give 8+ if the poster clearly NEEDS a solution and does not have one yet.
 """
 
 

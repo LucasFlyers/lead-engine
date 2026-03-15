@@ -7,35 +7,41 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-PAIN_KEYWORDS = [
-    "manual process taking too long",
-    "hours of manual data entry",
-    "we do this manually",
-    "need to automate",
+SEARCH_QUERIES = [
+    "manually entering data",
     "too much manual work",
-    "spending hours on spreadsheets",
-    "our team manually",
-    "automate our workflow",
-    "repetitive tasks killing productivity",
-    "no budget for software",
-    "can't afford salesforce",
-    "small business automation",
-    "overwhelmed with manual",
-    "tired of manually",
-    "copy paste every week",
-    "wasting hours on",
+    "hours copying spreadsheet",
+    "can't afford software",
+    "we do this by hand",
+    "need to automate",
+    "drowning in admin",
+    "repetitive tasks",
+    "how do i automate",
+    "manual process killing",
+    "so much time on",
+    "wasting time on",
+    "spreadsheet nightmare",
+    "manual data entry",
+    "our team spends hours",
 ]
+
+# Keep alias for keyword matching in post content
+PAIN_KEYWORDS = SEARCH_QUERIES
 
 TARGET_SUBREDDITS = [
     "smallbusiness",
     "Entrepreneur",
     "startups",
     "business",
-    "freelance",
-    "marketing",
     "sales",
-    "productivity",
-    "sysadmin",
+    "marketing",
+    "accounting",
+    "humanresources",
+    "projectmanagement",
+    "ecommerce",
+    "realestate",
+    "legaladvice",
+    "Bookkeeping",
 ]
 
 REDDIT_API = "https://www.reddit.com"
@@ -86,7 +92,7 @@ async def scrape_reddit(max_subreddits: int = 5) -> list[dict]:
 
     async with httpx.AsyncClient() as client:
         for subreddit in subreddits:
-            for keyword in PAIN_KEYWORDS[:8]:  # Limit API calls
+            for keyword in SEARCH_QUERIES[:8]:  # Limit API calls
                 signals = await search_subreddit(client, subreddit, keyword)
                 all_signals.extend(signals)
                 await asyncio.sleep(1.5)  # Respect Reddit rate limits
