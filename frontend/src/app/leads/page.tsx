@@ -12,7 +12,7 @@ export default function LeadsPage() {
   const [stats, setStats] = useState<LeadStats | null>(null);
 
   useEffect(() => {
-    api.leads.list({ per_page: 50, min_score: 1 }).then(r => setLeads(r.leads)).catch(() => {});
+    api.leads.list({ per_page: 50 }).then(r => setLeads(r.leads)).catch(() => {});
     api.leads.stats().then(setStats).catch(() => {});
   }, []);
 
