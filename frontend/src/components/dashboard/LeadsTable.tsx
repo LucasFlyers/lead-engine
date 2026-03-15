@@ -1,3 +1,4 @@
+"use client";
 import { Lead } from "@/lib/api";
 import { ArrowUpRight } from "lucide-react";
 

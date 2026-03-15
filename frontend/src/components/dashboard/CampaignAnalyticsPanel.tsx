@@ -1,3 +1,4 @@
+"use client";
 import { CampaignSummary, SubjectLine, IndustryMetric } from "@/lib/api";
 import { TrendingUp, Star, BarChart2 } from "lucide-react";
 
