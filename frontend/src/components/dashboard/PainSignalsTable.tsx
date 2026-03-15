@@ -31,13 +31,10 @@ export function PainSignalsTable({ signals }: { signals: PainSignal[] }) {
           </div>
         )}
         {signals.map((signal, i) => (
-          <div key={signal.id} style={{
+          <div key={signal.id} className="hover-card" style={{
             padding: "12px 18px",
             borderBottom: i < signals.length - 1 ? "1px solid var(--border)" : "none",
-          }}
-            onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = "var(--bg-subtle)"}
-            onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = ""}
-          >
+          }}>
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
               <p style={{ fontSize: 12.5, color: "var(--text-2)", lineHeight: 1.4, flex: 1 }}>
                 {signal.content.slice(0, 90)}{signal.content.length > 90 ? "…" : ""}

@@ -178,3 +178,6 @@ body {
   color:var(--accent);
   border-color:var(--accent-ring);
 }
+
+.hover-row:hover td { background: var(--surface-2); }
+.hover-card:hover { background: var(--surface-2); }

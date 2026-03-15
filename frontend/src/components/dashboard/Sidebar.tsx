@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
-  LayoutDashboard, Users, Zap, Mail, BarChart3,
+  LayoutDashboard, Users, Zap, BarChart3,
   Activity, Inbox, Settings, ChevronRight, Menu, X
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -84,10 +84,10 @@ export function Sidebar() {
 
       {/* Bottom bar */}
       <div style={{ padding: "12px 10px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <Link href="/settings" className="nav-item" style={{ flex: 1, marginRight: 8, padding: "6px 8px" }}>
+        <span className="nav-item" style={{ flex: 1, marginRight: 8, padding: "6px 8px", cursor: "default", opacity: 0.5 }}>
           <Settings size={14} />
           <span>Settings</span>
-        </Link>
+        </span>
         <ThemeToggle />
       </div>
     </aside>

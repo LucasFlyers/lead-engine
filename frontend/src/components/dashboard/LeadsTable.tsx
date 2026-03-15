@@ -45,10 +45,7 @@ export function LeadsTable({ leads }: { leads: Lead[] }) {
               </tr>
             )}
             {leads.map((lead, i) => (
-              <tr key={lead.id} style={{ borderBottom: i < leads.length - 1 ? "1px solid var(--border)" : "none" }}
-                onMouseEnter={e => (e.currentTarget as HTMLTableRowElement).style.background = "var(--bg-subtle)"}
-                onMouseLeave={e => (e.currentTarget as HTMLTableRowElement).style.background = ""}
-              >
+              <tr key={lead.id} className="hover-row" style={{ borderBottom: i < leads.length - 1 ? "1px solid var(--border)" : "none" }}>
                 <td style={{ padding: "10px 18px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div style={{
