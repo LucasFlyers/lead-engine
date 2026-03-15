@@ -13,7 +13,7 @@ from db.models import Company, Contact, LeadScore, OutreachQueue
 router = APIRouter(prefix="/leads", tags=["leads"])
 
 
-@router.get("/")
+@router.get("")
 async def list_leads(
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),

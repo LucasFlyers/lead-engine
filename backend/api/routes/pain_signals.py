@@ -9,7 +9,7 @@ from db.models import PainSignal
 router = APIRouter(prefix="/pain-signals", tags=["pain_signals"])
 
 
-@router.get("/")
+@router.get("")
 async def list_pain_signals(
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
