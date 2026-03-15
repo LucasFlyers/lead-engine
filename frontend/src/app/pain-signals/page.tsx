@@ -12,7 +12,7 @@ export default function PainSignalsPage() {
   const [stats, setStats] = useState<PainSignalStats | null>(null);
 
   useEffect(() => {
-    api.painSignals.list({ per_page: 50 }).then(r => setSignals(r.signals)).catch(() => {});
+    api.painSignals.list({ per_page: 50, min_score: 1 }).then(r => setSignals(r.signals)).catch(() => {});
     api.painSignals.stats().then(setStats).catch(() => {});
   }, []);
 
