@@ -100,8 +100,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],   # tighten after first successful deploy
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # NOTE: TrustedHostMiddleware REMOVED — it blocks Railway's health checker

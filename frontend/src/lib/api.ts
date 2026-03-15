@@ -1,3 +1,4 @@
+// v2 - https fixed
 const API_BASE = "https://backend-api-production-a8fb.up.railway.app/api/v1";
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
 

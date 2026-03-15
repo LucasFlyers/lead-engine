@@ -3,7 +3,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
@@ -26,8 +26,8 @@ async def compute_daily_metrics(db: AsyncSession, target_date: Optional[date] = 
         select(
             EmailSent.from_inbox,
             func.count(EmailSent.id).label("count"),
-            func.sum(func.cast(EmailSent.status == "bounced", int)).label("bounces"),
-            func.sum(func.cast(EmailSent.status == "spam_complaint", int)).label("spam_complaints"),
+            func.sum(case((EmailSent.status == "bounced", 1), else_=0)).label("bounces"),
+            func.sum(case((EmailSent.status == "spam_complaint", 1), else_=0)).label("spam_complaints"),
         )
         .where(and_(EmailSent.sent_at >= start, EmailSent.sent_at <= end))
         .group_by(EmailSent.from_inbox)
@@ -38,9 +38,9 @@ async def compute_daily_metrics(db: AsyncSession, target_date: Optional[date] = 
     resp_result = await db.execute(
         select(
             func.count(Response.id).label("total"),
-            func.sum(func.cast(Response.classification == "interested", int)).label("interested"),
-            func.sum(func.cast(Response.classification == "not_interested", int)).label("not_interested"),
-            func.sum(func.cast(Response.classification == "unsubscribe", int)).label("unsubscribes"),
+            func.sum(case((Response.classification == "interested", 1), else_=0)).label("interested"),
+            func.sum(case((Response.classification == "not_interested", 1), else_=0)).label("not_interested"),
+            func.sum(case((Response.classification == "unsubscribe", 1), else_=0)).label("unsubscribes"),
         )
         .where(and_(Response.received_at >= start, Response.received_at <= end))
     )
@@ -106,7 +106,7 @@ async def get_best_industries(db: AsyncSession, limit: int = 10) -> list[dict]:
             Company.industry,
             func.count(EmailSent.id).label("sent"),
             func.count(Response.id).label("replies"),
-            func.sum(func.cast(Response.classification == "interested", int)).label("interested"),
+            func.sum(case((Response.classification == "interested", 1), else_=0)).label("interested"),
         )
         .join(EmailSent, EmailSent.company_id == Company.id)
         .outerjoin(Response, Response.email_sent_id == EmailSent.id)
