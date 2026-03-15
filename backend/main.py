@@ -89,7 +89,7 @@ app = FastAPI(
     title="Autonomous Lead Engine API",
     version="1.0.0",
     lifespan=lifespan,
-    # Show docs in all envs for now — helps with debugging
+    redirect_slashes=False,
     docs_url="/docs",
     redoc_url="/redoc",
 )
