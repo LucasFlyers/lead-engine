@@ -15,7 +15,7 @@ SCORE_THRESHOLD = 7
 
 ANALYSIS_PROMPT = """You are a B2B lead qualification expert specializing in automation and workflow optimization.
 
-Analyze this discussion post and extract lead intelligence:
+Analyze this discussion post and extract lead intelligence. You are looking for BUSINESSES that need automation help — NOT people sharing automation success stories or promoting tools.
 
 CONTENT:
 {content}
@@ -33,11 +33,24 @@ Respond ONLY with valid JSON in this exact structure:
 }}
 
 Scoring criteria:
-- 8-10: Clear operational pain, business context, automation is obvious solution
-- 6-7: Some automation potential but vague or consumer-focused  
-- 1-5: No business automation opportunity or off-topic
+- 8-10: Business owner/operator expressing frustration with manual processes, wasted time on repetitive tasks, asking how to automate a specific workflow, mentions specific processes (invoicing, reporting, data entry, CRM, scheduling). HIGH SCORE.
+- 6-7: Business context with some automation need but less specific or urgent.
+- 1-5: Off-topic, consumer question, or any of the following DISQUALIFIERS.
 
-Only give 8+ if: there's a clear BUSINESS workflow problem that software could solve.
+DISQUALIFIERS — score 1-3 for:
+- Posts sharing automation success stories ("we automated X and saved Y hours")
+- Promoting or reviewing AI/automation tools or products
+- Tutorial or how-to content about building automations
+- Marketing or promotional content
+- Developer discussing technical implementation
+- No clear business operational pain expressed
+
+BOOST SCORE for:
+- Frustration language: "tired of", "sick of", "it takes forever", "wasting hours"
+- Business owner or operations role mentioned
+- Specific manual process named (invoicing, spreadsheet reports, data entry, CRM updates)
+- Small or medium business context (not enterprise, not solo hobby project)
+- Asking for help or recommendations to solve a workflow problem
 """
 
 

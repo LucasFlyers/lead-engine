@@ -8,17 +8,34 @@ import httpx
 logger = logging.getLogger(__name__)
 
 PAIN_KEYWORDS = [
-    "manual reporting", "spending hours on spreadsheets", "manually compiling",
-    "wish this was automated", "too many spreadsheets", "manual data entry",
-    "copy paste", "export to excel", "takes forever to", "wasting time on",
-    "repetitive tasks", "automate this", "need automation", "workflow automation",
-    "tired of manually", "manual process", "human error", "data silos",
+    "manual process taking too long",
+    "hours of manual data entry",
+    "we do this manually",
+    "need to automate",
+    "too much manual work",
+    "spending hours on spreadsheets",
+    "our team manually",
+    "automate our workflow",
+    "repetitive tasks killing productivity",
+    "no budget for software",
+    "can't afford salesforce",
+    "small business automation",
+    "overwhelmed with manual",
+    "tired of manually",
+    "copy paste every week",
+    "wasting hours on",
 ]
 
 TARGET_SUBREDDITS = [
-    "entrepreneur", "smallbusiness", "startups", "business",
-    "marketing", "digitalnomad", "freelance", "agency",
-    "projectmanagement", "sysadmin", "businessanalysis",
+    "smallbusiness",
+    "Entrepreneur",
+    "startups",
+    "business",
+    "freelance",
+    "marketing",
+    "sales",
+    "productivity",
+    "sysadmin",
 ]
 
 REDDIT_API = "https://www.reddit.com"

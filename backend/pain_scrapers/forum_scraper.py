@@ -9,9 +9,21 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 PAIN_KEYWORDS = [
-    "manual reporting", "spreadsheet", "automate", "wasting time",
-    "repetitive", "manual process", "wish this was automated",
-    "data entry", "export", "copy paste", "hours per week",
+    "manual process taking too long",
+    "hours of manual data entry",
+    "we do this manually",
+    "need to automate",
+    "too much manual work",
+    "spending hours on spreadsheets",
+    "our team manually",
+    "automate our workflow",
+    "repetitive tasks killing productivity",
+    "no budget for software",
+    "can't afford salesforce",
+    "small business automation",
+    "overwhelmed with manual",
+    "tired of manually",
+    "wasting hours on",
 ]
 
 HEADERS = {"User-Agent": "Mozilla/5.0 AppleWebKit/537.36"}
@@ -23,7 +35,7 @@ IH_SEARCH = "https://www.indiehackers.com/search?query={query}"
 async def scrape_hacker_news(client: httpx.AsyncClient) -> list[dict]:
     """Scrape HackerNews for pain signals."""
     signals = []
-    queries = ["automate reporting", "spreadsheet automation", "manual workflow"]
+    queries = ["manual process too long", "need to automate workflow", "hours of manual work small business"]
 
     for query in queries:
         try:
@@ -54,7 +66,7 @@ async def scrape_hacker_news(client: httpx.AsyncClient) -> list[dict]:
 async def scrape_indie_hackers(client: httpx.AsyncClient) -> list[dict]:
     """Scrape Indie Hackers for pain signals."""
     signals = []
-    queries = ["automation", "manual process", "spreadsheets"]
+    queries = ["manual process taking too long", "need to automate", "repetitive tasks"]
 
     for query in queries:
         try:
