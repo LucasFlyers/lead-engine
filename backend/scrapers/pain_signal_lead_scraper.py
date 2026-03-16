@@ -197,6 +197,41 @@ async def scrape_himalayas_by_industry(
     return companies
 
 
+def normalize_keywords(keywords: list[str]) -> list[str]:
+    """Convert AI-generated industry names to job board search terms."""
+    mapping = {
+        "accounting firms": ["accounting", "bookkeeping", "cpa", "finance"],
+        "e-commerce stores": ["ecommerce", "shopify", "retail", "store"],
+        "small b2b businesses": ["b2b", "sales", "crm", "business"],
+        "invoice automation": ["invoice", "billing", "accounting", "finance"],
+        "data entry solutions": ["data", "operations", "admin", "back office"],
+        "real estate agencies": ["real estate", "realty", "property"],
+        "marketing agencies": ["marketing", "agency", "digital"],
+        "healthcare": ["healthcare", "medical", "clinic", "dental"],
+        "legal": ["legal", "law", "attorney"],
+        "logistics": ["logistics", "shipping", "supply chain"],
+        "manufacturing": ["manufacturing", "factory", "production"],
+        "hr/recruiting": ["hr", "recruiting", "staffing", "people ops"],
+    }
+    
+    normalized = []
+    for kw in keywords:
+        kw_lower = kw.lower()
+        matched = False
+        for key, values in mapping.items():
+            if key in kw_lower or any(v in kw_lower for v in values):
+                normalized.extend(values)
+                matched = True
+                break
+        if not matched:
+            # Use original keyword but simplified
+            normalized.append(kw_lower.split()[0] if kw_lower else kw_lower)
+    
+    # Always include these base terms
+    normalized.extend(["operations", "admin", "workflow", "process"])
+    return list(set(normalized))
+
+
 async def scrape_pain_signal_leads(
     intelligence: Optional[dict] = None,
 ) -> list[dict]:
@@ -221,6 +256,10 @@ async def scrape_pain_signal_leads(
 
     if not keywords:
         keywords = DEFAULT_INDUSTRIES
+    
+    # Normalize to job-board-friendly terms
+    keywords = normalize_keywords(keywords)
+    logger.info("Normalized search keywords: %s", keywords[:8])
 
     all_companies: list[dict] = []
     seen: set[str] = set()

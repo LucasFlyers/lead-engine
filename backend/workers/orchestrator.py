@@ -124,12 +124,23 @@ async def run_scraping_pipeline() -> None:
                 continue
             company_data, emails = item
 
-            # Idempotent insert — skip if domain already exists
-            existing_check = await db.execute(
-                select(Company.id).where(Company.domain == company_data.get("domain")).limit(1)
-            )
-            if existing_check.scalar_one_or_none():
-                continue
+            # Idempotent insert — skip if domain already exists (only if domain is set)
+            company_domain = company_data.get("domain")
+            if company_domain:
+                existing_check = await db.execute(
+                    select(Company.id).where(Company.domain == company_domain).limit(1)
+                )
+                if existing_check.scalar_one_or_none():
+                    continue
+            else:
+                # No domain — check by company name instead
+                existing_name_check = await db.execute(
+                    select(Company.id).where(
+                        Company.company_name == company_data.get("company_name")
+                    ).limit(1)
+                )
+                if existing_name_check.scalar_one_or_none():
+                    continue
 
             company = Company(
                 company_name = company_data["company_name"],
