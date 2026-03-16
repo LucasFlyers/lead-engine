@@ -190,11 +190,18 @@ async def score_lead(company: dict) -> Optional[dict]:
         website      = _sanitise_for_prompt(company.get("website", ""), 100)
         industry     = _sanitise_for_prompt(company.get("industry", "Unknown"), 80)
 
+        # Add pain signal context if available
+        pain_context = company.get("pain_context", "")
+        outreach_angle = company.get("outreach_angle", "")
+        context_note = ""
+        if outreach_angle:
+            context_note = f"\nPAIN CONTEXT: This company was found because our research shows businesses like this struggle with: {outreach_angle}"
+
         prompt = SCORING_PROMPT.format(
             company_name=company_name,
             website=website,
             industry=industry,
-            content=content or "No content available.",
+            content=(content or "No content available.") + context_note,
         )
 
         try:

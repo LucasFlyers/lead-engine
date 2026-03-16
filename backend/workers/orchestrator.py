@@ -49,6 +49,8 @@ async def run_scraping_pipeline() -> None:
     from scrapers.google_maps_scraper      import scrape_google_maps
     from scrapers.agency_directory_scraper import scrape_agency_directories
     from scrapers.email_discovery          import discover_emails
+    from scrapers.pain_signal_lead_scraper  import scrape_pain_signal_leads
+    from ai.pain_signal_intelligence        import get_targeting_from_db
     from deduplication.lead_deduper        import deduplicate_batch
     from ai.lead_scoring                   import score_leads_batch
     from sqlalchemy import select, text
@@ -56,12 +58,22 @@ async def run_scraping_pipeline() -> None:
     async with AsyncSessionLocal() as db:
         await _log_event(db, "pipeline_start", "Scraping pipeline started")
 
+    # --- Get targeting intelligence from pain signals ---
+    try:
+        intelligence = await get_targeting_from_db()
+        logger.info("Pain signal intelligence loaded: %s", 
+                   intelligence.get("outreach_angle") if intelligence else "none")
+    except Exception as exc:
+        logger.warning("Could not load pain signal intelligence: %s", exc)
+        intelligence = None
+
     # --- Collect from all sources ---
     all_companies: list[dict] = []
     for name, coro in [
         ("Clutch",            scrape_clutch()),
         ("Google Maps",       scrape_google_maps()),
         ("Agency directories",scrape_agency_directories()),
+        ("Pain-signal targeted", scrape_pain_signal_leads(intelligence)),
     ]:
         try:
             batch = await coro
