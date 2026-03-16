@@ -46,11 +46,31 @@ def validate_email(email: str) -> bool:
     domain_part = email.split("@")[1].lower()
     if any(domain_part.endswith(ext) for ext in invalid_extensions):
         return False
-    # Filter common no-reply patterns
-    invalid_prefixes = ["noreply", "no-reply", "donotreply", "bounce", "mailer-daemon"]
+    # Filter common no-reply and non-human patterns
+    invalid_prefixes = [
+        "noreply", "no-reply", "donotreply", "bounce", "mailer-daemon",
+        "trademark", "legal", "dmca", "abuse", "security", "privacy",
+        "compliance", "postmaster", "webmaster", "admin", "support",
+        "help", "feedback", "press", "media", "pr@", "jobs", "careers",
+        "hiring", "recruit", "newsletter", "notifications", "alerts",
+        "unsubscribe", "billing", "payments", "invoice", "accounts",
+    ]
     local_part = email.split("@")[0].lower()
-    if any(local_part.startswith(p) for p in invalid_prefixes):
+    if any(local_part.startswith(p) or local_part == p.rstrip("@") 
+           for p in invalid_prefixes):
         return False
+    
+    # Filter big tech companies - not our targets
+    big_tech_domains = [
+        "mozilla.com", "mozilla.org", "google.com", "microsoft.com",
+        "apple.com", "amazon.com", "meta.com", "facebook.com",
+        "netflix.com", "salesforce.com", "oracle.com", "ibm.com",
+        "adobe.com", "linkedin.com", "twitter.com", "x.com",
+    ]
+    domain_part = email.split("@")[1].lower()
+    if any(domain_part == bd for bd in big_tech_domains):
+        return False
+    
     return True
 
 

@@ -103,12 +103,20 @@ def _smtp_send_sync(
                 srv.login(inbox.smtp_user, inbox.smtp_password)
                 srv.send_message(msg)
         else:
-            with smtplib.SMTP(inbox.smtp_host, inbox.smtp_port, timeout=30) as srv:
-                srv.ehlo()
-                srv.starttls(context=ctx)
-                srv.ehlo()
-                srv.login(inbox.smtp_user, inbox.smtp_password)
-                srv.send_message(msg)
+            # Try STARTTLS on configured port first
+            try:
+                with smtplib.SMTP(inbox.smtp_host, inbox.smtp_port, timeout=30) as srv:
+                    srv.ehlo()
+                    srv.starttls(context=ctx)
+                    srv.ehlo()
+                    srv.login(inbox.smtp_user, inbox.smtp_password)
+                    srv.send_message(msg)
+            except OSError:
+                # Port 587 blocked — try SSL on port 465
+                logger.info("Port %d blocked, trying SSL on 465", inbox.smtp_port)
+                with smtplib.SMTP_SSL(inbox.smtp_host, 465, context=ctx, timeout=30) as srv:
+                    srv.login(inbox.smtp_user, inbox.smtp_password)
+                    srv.send_message(msg)
 
         logger.info("Sent %s → %s [%s]", inbox.email, to_email, message_id)
         return True, "sent", message_id
