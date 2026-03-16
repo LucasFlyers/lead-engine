@@ -12,51 +12,61 @@ client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
 SCORE_THRESHOLD = 7
 
+ANALYSIS_PROMPT = """You are a B2B sales development expert. Your job is to identify 
+Reddit posts from REAL BUSINESS OWNERS who need automation or software help and 
+could become paying customers.
 
-ANALYSIS_PROMPT = """You are a B2B lead qualification expert specializing in automation and workflow optimization.
-
-Analyze this discussion post and extract lead intelligence. You are looking for BUSINESSES that need automation help — NOT people sharing automation success stories or promoting tools.
+Analyze this post:
 
 CONTENT:
 {content}
 
+SUBREDDIT: {subreddit}
 SOURCE: {source}
-KEYWORDS MATCHED: {keywords}
 
-Respond ONLY with valid JSON in this exact structure:
+Respond ONLY with valid JSON:
 {{
-  "industry": "string (best guess at industry this person/company is in)",
-  "problem_description": "string (brief description of the operational pain they're experiencing)",
-  "automation_opportunity": "string (specific automation or software solution that would solve this)",
-  "lead_potential_score": integer (1-10, where 10 = perfect automation prospect),
-  "reasoning": "string (1-2 sentences explaining your score)"
+  "industry": "string",
+  "problem_description": "string (the specific manual process causing pain)",
+  "automation_opportunity": "string (exact software/automation that would solve this)",
+  "lead_potential_score": integer (1-10),
+  "reasoning": "string (one sentence)",
+  "contact_worthy": boolean (true if we should reach out to this person)
 }}
 
-Scoring criteria — use EXACTLY these tiers:
+SCORING RULES — be strict:
 
-Score 1-3 (disqualify immediately):
-- Content creators or developers showing off tools they built
-- Automation success stories ("we automated X and saved Y hours")
-- Product launches or tool promotions
-- Tutorials, how-to guides, "here's how I automated X"
-- Listicles or roundup articles
-- No clear operational pain from a real business
+SCORE 1-2 — REJECT immediately if ANY of these:
+- Person is sharing something they built/automated ("I built", "I automated", "I created")
+- Product announcement or launch post
+- Tutorial or how-to guide
+- Success story ("we saved X hours")
+- Academic or student project
+- The post is from a DEVELOPER building tools, not a business using tools
 
-Score 4-6 (marginal — general questions, vague frustration):
-- General questions about automation without specific business context
-- Vague frustration without a named process or cost
-- Student or hobbyist context
-- Enterprise company where software budget is not a concern
+SCORE 3-5 — Weak signal:
+- Vague frustration with no specific process named
+- Large enterprise (they have IT budget)
+- Hobby or personal project
+- General question without business context
 
-Score 7-10 (qualified lead — active business pain):
-- Business owner or operator (ops, finance, admin, sales, HR) expressing ACTIVE pain
-- Specific manual process named: invoicing, reporting, data entry, CRM updates, scheduling, payroll, inventory, onboarding, order processing
-- Mentions time cost ("3 hours every week", "my team spends all day")
-- Mentions cost frustration ("can't afford", "too expensive", "no budget")
-- Asking for software recommendations or "how do I automate X"
-- Small or medium business context (not solo hobby, not Fortune 500)
+SCORE 6 — Moderate:
+- Small business owner asking about software options
+- Clear manual process but no urgency expressed
 
-Only give 8+ if the poster clearly NEEDS a solution and does not have one yet.
+SCORE 7-8 — Strong lead:
+- Small/medium business owner (1-50 employees)
+- Specific named manual process: data entry, invoicing, reporting, CRM, scheduling, inventory, payroll, onboarding, order processing, email follow-up
+- Expresses time cost OR asks for software recommendation
+- Does NOT have a solution yet
+
+SCORE 9-10 — Perfect lead:
+- All of score 7-8 PLUS
+- Mentions specific cost of the problem (time, money, staff hours)
+- Asking for immediate help or recommendation
+- Clear budget or willingness to pay for solution
+
+Set contact_worthy=true ONLY for scores 7+.
 """
 
 
@@ -64,9 +74,9 @@ async def analyze_pain_signal(signal: dict) -> Optional[dict]:
     """Analyze a single pain signal using AI."""
     try:
         prompt = ANALYSIS_PROMPT.format(
-            content=signal.get("content", "")[:1000],
+            content=signal.get("content", "")[:1200],
+            subreddit=signal.get("subreddit", "unknown"),
             source=signal.get("source", ""),
-            keywords=", ".join(signal.get("keywords_matched", [])),
         )
 
         response = await client.chat.completions.create(
@@ -77,11 +87,11 @@ async def analyze_pain_signal(signal: dict) -> Optional[dict]:
         )
 
         raw = response.choices[0].message.content.strip()
-        # Strip markdown code blocks if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
+        raw = raw.strip()
 
         result = json.loads(raw)
 
@@ -91,10 +101,11 @@ async def analyze_pain_signal(signal: dict) -> Optional[dict]:
             "automation_opp": result.get("automation_opportunity"),
             "lead_potential": result.get("lead_potential_score", 0),
             "reasoning": result.get("reasoning"),
+            "contact_worthy": result.get("contact_worthy", False),
         }
 
     except json.JSONDecodeError as e:
-        logger.error(f"JSON parse error in pain signal analysis: {e}")
+        logger.error(f"JSON parse error: {e}")
         return None
     except Exception as e:
         logger.error(f"Error analyzing pain signal: {e}")
@@ -102,7 +113,7 @@ async def analyze_pain_signal(signal: dict) -> Optional[dict]:
 
 
 async def analyze_batch(signals: list[dict]) -> list[dict]:
-    """Analyze a batch of pain signals, returning only high-score ones."""
+    """Analyze a batch of pain signals, returning only qualified ones."""
     qualified = []
 
     for signal in signals:
