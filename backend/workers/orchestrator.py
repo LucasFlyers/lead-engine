@@ -164,6 +164,18 @@ async def run_scraping_pipeline() -> None:
                     model_used          = score_data.get("model_used"),
                 ))
 
+            # If no emails discovered, generate fallback using company name
+            if not emails:
+                company_name_clean = company_data["company_name"].lower()
+                company_name_clean = __import__("re").sub(r"[^a-z0-9]", "", company_name_clean)
+                domain = company_data.get("domain") or f"{company_name_clean}.com"
+                if domain and company_name_clean:
+                    for prefix in ["info", "hello", "contact"]:
+                        emails.append({
+                            "email": f"{prefix}@{domain}",
+                            "discovery_method": "pattern_fallback",
+                        })
+
             # Add first valid contact and queue item only
             queued = False
             for email_data in emails[:5]:
