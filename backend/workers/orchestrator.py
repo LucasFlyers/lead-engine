@@ -108,7 +108,7 @@ async def run_scraping_pipeline() -> None:
 
     async def _discover(company_data: dict) -> tuple[dict, list[dict]]:
         async with sem:
-            emails = await discover_emails(company_data.get("website", ""))
+            emails = await discover_emails(company_data.get("website", ""), company_data.get("company_name", ""))
             return company_data, emails
 
     discovery_results = await asyncio.gather(

@@ -20,6 +20,23 @@ HEADERS = {
 }
 
 
+def guess_domain_from_name(company_name: str) -> str:
+    """Guess a company domain from its name."""
+    import re
+    # Clean company name to domain format
+    name = company_name.lower().strip()
+    # Remove common suffixes
+    for suffix in [" inc", " llc", " ltd", " corp", " co", " company",
+                   " group", " agency", " studio", " solutions", " services",
+                   " technologies", " tech", ".com", ".io"]:
+        name = name.replace(suffix, "")
+    # Replace spaces and special chars with nothing
+    name = re.sub(r"[^a-z0-9]", "", name)
+    if name:
+        return f"{name}.com"
+    return ""
+
+
 def validate_email(email: str) -> bool:
     """Validate email format and filter out common false positives."""
     if not EMAIL_REGEX.match(email):
@@ -71,8 +88,27 @@ async def fetch_page(client: httpx.AsyncClient, url: str) -> Optional[str]:
     return None
 
 
-async def discover_emails(website: str) -> list[dict]:
+async def discover_emails(website: str, company_name: str = "") -> list[dict]:
     """Discover emails from a company website."""
+    # If website is a job board URL, clear it and use domain guessing
+    job_board_domains = [
+        "remoteok.com", "weworkremotely.com", "himalayas.app",
+        "remotive.com", "linkedin.com", "indeed.com", "glassdoor.com",
+        "github.com", "wellfound.com", "angel.co",
+    ]
+    
+    if website:
+        parsed = urlparse(website if website.startswith("http") else f"https://{website}")
+        if any(jb in parsed.netloc for jb in job_board_domains):
+            website = ""  # Clear job board URL, will use domain guessing
+    
+    # If no website, try to guess from company name
+    if not website and company_name:
+        guessed = guess_domain_from_name(company_name)
+        if guessed:
+            website = f"https://{guessed}"
+            logger.debug(f"Guessed domain {guessed} for {company_name}")
+    
     if not website:
         return []
 
