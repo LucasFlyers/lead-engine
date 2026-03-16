@@ -28,6 +28,8 @@ from email.mime.text import MIMEText
 from typing import Optional
 
 from deliverability.inbox_rotation_manager import get_rotation_manager_sync, InboxConfig
+import urllib.request
+import json as _json
 from deliverability.spam_safety_checks import spam_checker
 
 logger = logging.getLogger(__name__)
@@ -79,7 +81,56 @@ def build_email_message(
 
 
 # --------------------------------------------------------------------------- #
-#  Synchronous SMTP send (runs inside to_thread)
+#  Send via Brevo HTTP API (works on Railway — no SMTP port blocking)
+# --------------------------------------------------------------------------- #
+def _send_via_brevo_api(
+    api_key: str,
+    from_email: str,
+    from_name: str,
+    to_email: str,
+    subject: str,
+    body: str,
+) -> tuple[bool, str, Optional[str]]:
+    """Send email via Brevo HTTP API. Returns (success, status, message_id)."""
+    import email.utils
+    message_id = email.utils.make_msgid(domain=from_email.split("@")[-1])
+    
+    payload = _json.dumps({
+        "sender": {"name": from_name, "email": from_email},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "textContent": body + "\n\n---\nTo unsubscribe, reply with \'unsubscribe\'.",
+    }).encode("utf-8")
+    
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=payload,
+        headers={
+            "accept": "application/json",
+            "api-key": api_key,
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = _json.loads(resp.read())
+            msg_id = result.get("messageId", message_id)
+            logger.info("Brevo API sent → %s [%s]", to_email, msg_id)
+            return True, "sent", msg_id
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="replace")
+        logger.error("Brevo API error %d for %s: %s", e.code, to_email, error_body)
+        if e.code in (400, 422):
+            return False, "bounced", message_id
+        return False, "error", message_id
+    except Exception as exc:
+        logger.error("Brevo API unexpected error for %s: %s", to_email, exc)
+        return False, "error", message_id
+
+
+#  Synchronous send — uses Brevo API if configured, falls back to SMTP
 # --------------------------------------------------------------------------- #
 def _smtp_send_sync(
     inbox: InboxConfig,
@@ -89,50 +140,45 @@ def _smtp_send_sync(
 ) -> tuple[bool, str, Optional[str]]:
     """
     Returns (success, status, message_id).
-    status is one of: 'sent' | 'bounced' | 'auth_error' | 'error'
+    Uses Brevo HTTP API if BREVO_API_KEY is set, otherwise tries SMTP.
     """
     from_name = os.environ.get("SENDER_NAME", "")
+    
+    # Use Brevo HTTP API if configured (bypasses Railway SMTP blocking)
+    brevo_key = os.environ.get("BREVO_API_KEY", "")
+    if brevo_key:
+        return _send_via_brevo_api(
+            brevo_key, inbox.email, from_name, to_email, subject, body
+        )
+    
+    # Fall back to SMTP
     msg = build_email_message(from_name, inbox.email, to_email, subject, body)
     message_id: str = msg["Message-ID"]
-
     ctx = ssl.create_default_context()
+    
     try:
         if inbox.smtp_port == 465:
-            server_cls = smtplib.SMTP_SSL
-            with server_cls(inbox.smtp_host, inbox.smtp_port, context=ctx, timeout=30) as srv:
+            with smtplib.SMTP_SSL(inbox.smtp_host, inbox.smtp_port, context=ctx, timeout=30) as srv:
                 srv.login(inbox.smtp_user, inbox.smtp_password)
                 srv.send_message(msg)
         else:
-            # Try STARTTLS on configured port first
-            try:
-                with smtplib.SMTP(inbox.smtp_host, inbox.smtp_port, timeout=30) as srv:
-                    srv.ehlo()
-                    srv.starttls(context=ctx)
-                    srv.ehlo()
-                    srv.login(inbox.smtp_user, inbox.smtp_password)
-                    srv.send_message(msg)
-            except OSError:
-                # Port 587 blocked — try SSL on port 465
-                logger.info("Port %d blocked, trying SSL on 465", inbox.smtp_port)
-                with smtplib.SMTP_SSL(inbox.smtp_host, 465, context=ctx, timeout=30) as srv:
-                    srv.login(inbox.smtp_user, inbox.smtp_password)
-                    srv.send_message(msg)
+            with smtplib.SMTP(inbox.smtp_host, inbox.smtp_port, timeout=30) as srv:
+                srv.ehlo()
+                srv.starttls(context=ctx)
+                srv.ehlo()
+                srv.login(inbox.smtp_user, inbox.smtp_password)
+                srv.send_message(msg)
 
         logger.info("Sent %s → %s [%s]", inbox.email, to_email, message_id)
         return True, "sent", message_id
 
     except smtplib.SMTPRecipientsRefused:
-        logger.warning("Recipient refused (hard bounce): %s", to_email)
         return False, "bounced", message_id
-    except smtplib.SMTPDataError as exc:
-        logger.warning("SMTP data error (content rejected) for %s: %s", to_email, exc)
+    except smtplib.SMTPDataError:
         return False, "bounced", message_id
     except smtplib.SMTPAuthenticationError:
-        logger.error("SMTP auth failed for inbox %s — check credentials", inbox.email)
+        logger.error("SMTP auth failed for %s", inbox.email)
         return False, "auth_error", message_id
-    except smtplib.SMTPException as exc:
-        logger.error("SMTP error sending to %s: %s", to_email, exc)
-        return False, "error", message_id
     except Exception as exc:
         logger.error("Unexpected error sending to %s: %s", to_email, exc)
         return False, "error", message_id
