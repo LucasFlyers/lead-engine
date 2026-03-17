@@ -88,9 +88,11 @@ Return ONLY valid JSON — no markdown, no explanation outside the JSON:
 }}
 
 Scoring guide:
-8-10 → Clear automation pain, active B2B service company, manual processes evident
+8-10 → Clear automation pain, active B2B service company, manual processes evident, 1-200 employees
 6-7  → Software/tech/agency company, limited data but plausible fit — DEFAULT for sparse data
-1-5  → Poor fit (consumer app, fully automated platform, solo freelancer, enterprise tech giant)
+1-5  → Poor fit: consumer app, fully automated platform, solo freelancer, OR enterprise giant (Autodesk, Gartner, SAP, Salesforce, Microsoft, Oracle, IBM, Adobe, Datadog, Stripe, Twilio, GitHub, Atlassian, HubSpot, Zendesk, Workday, ServiceNow, Snowflake — score these 1-2)
+
+IMPORTANT: Any well-known enterprise software company must score 1-3. We only want small and medium businesses.
 """
 
 

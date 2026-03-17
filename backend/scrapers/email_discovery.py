@@ -60,12 +60,17 @@ def validate_email(email: str) -> bool:
            for p in invalid_prefixes):
         return False
     
-    # Filter big tech companies - not our targets
+    # Filter enterprise/big tech companies - not our targets
     big_tech_domains = [
         "mozilla.com", "mozilla.org", "google.com", "microsoft.com",
         "apple.com", "amazon.com", "meta.com", "facebook.com",
         "netflix.com", "salesforce.com", "oracle.com", "ibm.com",
         "adobe.com", "linkedin.com", "twitter.com", "x.com",
+        "autodesk.com", "gartner.com", "sap.com", "workday.com",
+        "servicenow.com", "zendesk.com", "hubspot.com", "atlassian.com",
+        "datadog.com", "splunk.com", "snowflake.com", "databricks.com",
+        "mendix.com", "goguardian.com", "github.com", "gitlab.com",
+        "stripe.com", "twilio.com", "cloudflare.com", "okta.com",
     ]
     domain_part = email.split("@")[1].lower()
     if any(domain_part == bd for bd in big_tech_domains):
