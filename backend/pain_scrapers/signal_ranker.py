@@ -40,6 +40,7 @@ SOURCE_CONFIDENCE: dict[str, float] = {
     "indiehackers": 7.0,   # founder community, good signal quality
     "hackernews":   5.0,   # tends to return old results; often developer-centric
     "forum":        6.0,   # generic catch-all
+    "x":            7.5,   # real-time operator posts via official API; noisier than reviews
 }
 SOURCE_CONFIDENCE_DEFAULT = 5.0   # for unknown sources
 

@@ -225,6 +225,7 @@ async def run_pain_signal_pipeline() -> None:
     from pain_scrapers.reddit_scraper           import scrape_reddit
     from pain_scrapers.forum_scraper            import scrape_forums
     from pain_scrapers.review_scraper           import scrape_reviews
+    from pain_scrapers.x_scraper               import scrape_x
     from ai.pain_signal_analyzer                import analyze_batch
     from ai.pain_signal_outreach_writer         import generate_outreach_suggestions
     from pain_scrapers.signal_ranker            import (
@@ -237,6 +238,7 @@ async def run_pain_signal_pipeline() -> None:
         ("Reddit",  scrape_reddit()),
         ("Forums",  scrape_forums()),
         ("Reviews", scrape_reviews()),
+        ("X",       scrape_x()),
     ]:
         try:
             batch = await coro
