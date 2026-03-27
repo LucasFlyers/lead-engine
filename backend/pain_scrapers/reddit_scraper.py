@@ -22,6 +22,8 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
+from pain_scrapers.signal_ranker import normalize_source_timestamp
+
 logger = logging.getLogger(__name__)
 
 
@@ -220,7 +222,12 @@ def _extract_keywords(post_data: dict) -> list[str]:
     return list(dict.fromkeys(kw for kw in candidates if kw in full_text))
 
 
-def _build_signal(post_data: dict, subreddit: str, comments_text: str = "") -> dict:
+def _build_signal(
+    post_data:       dict,
+    subreddit:       str,
+    comments_text:   str = "",
+    heuristic_score: int = 0,
+) -> dict:
     """
     Assemble the final signal dict from raw Reddit data + enriched comments.
     'content' is the structured text block forwarded to pain_signal_analyzer.
@@ -243,12 +250,15 @@ def _build_signal(post_data: dict, subreddit: str, comments_text: str = "") -> d
         "content":           "\n\n".join(parts),
         "subreddit":         subreddit,
         "keywords_matched":  _extract_keywords(post_data),
-        # enriched extras used by outreach writer
+        # enriched extras used by outreach writer and ranker
         "title":             title,
         "body":              body_truncated,
         "top_comments_text": comments_text,
         "post_score":        post_data.get("score", 0),
         "num_comments":      post_data.get("num_comments", 0),
+        "heuristic_score":   heuristic_score,
+        # timestamp — normalized to datetime | None by signal_ranker
+        "source_created_at": normalize_source_timestamp(post_data.get("created_utc")),
         "scraped_at":        datetime.utcnow().isoformat(),
     }
 
@@ -509,12 +519,12 @@ async def scrape_reddit(max_subreddits: int | None = None) -> list[dict]:
         # -------------------------------------------------------------------
         signals: list[dict] = []
 
-        for (post_data, subreddit, _), comments in zip(to_enrich, comment_results):
+        for (post_data, subreddit, rel_score), comments in zip(to_enrich, comment_results):
             comments_text = comments if isinstance(comments, str) else ""
-            signals.append(_build_signal(post_data, subreddit, comments_text))
+            signals.append(_build_signal(post_data, subreddit, comments_text, rel_score))
 
-        for post_data, subreddit, _ in rest:
-            signals.append(_build_signal(post_data, subreddit))
+        for post_data, subreddit, rel_score in rest:
+            signals.append(_build_signal(post_data, subreddit, "", rel_score))
 
         logger.info(
             "Reddit scraper: %d signals ready for AI analysis "

@@ -43,23 +43,36 @@ CREATE TABLE contacts (
 CREATE INDEX idx_contacts_company ON contacts(company_id);
 
 CREATE TABLE pain_signals (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    source          TEXT NOT NULL,
-    source_url      TEXT,
-    author          TEXT,
-    content         TEXT NOT NULL,
-    keywords_matched TEXT[],
-    industry        TEXT,
-    problem_desc    TEXT,
-    automation_opp  TEXT,
-    lead_potential  INTEGER CHECK(lead_potential BETWEEN 1 AND 10),
-    company_id      UUID REFERENCES companies(id),
-    processed       BOOLEAN NOT NULL DEFAULT FALSE,
-    scraped_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    source              TEXT NOT NULL,
+    source_url          TEXT,
+    author              TEXT,
+    content             TEXT NOT NULL,
+    keywords_matched    TEXT[],
+    industry            TEXT,
+    problem_desc        TEXT,
+    automation_opp      TEXT,
+    lead_potential      INTEGER CHECK(lead_potential BETWEEN 1 AND 10),
+    company_id          UUID REFERENCES companies(id),
+    processed           BOOLEAN NOT NULL DEFAULT FALSE,
+    scraped_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Ranking / freshness metadata (nullable for backward compat)
+    source_created_at   TIMESTAMPTZ,
+    freshness_score     FLOAT,
+    final_rank_score    FLOAT
 );
 
-CREATE INDEX idx_pain_signals_score     ON pain_signals(lead_potential);
-CREATE INDEX idx_pain_signals_processed ON pain_signals(processed);
+CREATE INDEX idx_pain_signals_score      ON pain_signals(lead_potential);
+CREATE INDEX idx_pain_signals_processed  ON pain_signals(processed);
+CREATE INDEX idx_pain_signals_rank_score ON pain_signals(final_rank_score DESC NULLS LAST);
+CREATE INDEX idx_pain_signals_created_at ON pain_signals(source_created_at DESC NULLS LAST);
+
+-- Migration for existing databases: run these if the table already exists
+-- ALTER TABLE pain_signals ADD COLUMN IF NOT EXISTS source_created_at  TIMESTAMPTZ;
+-- ALTER TABLE pain_signals ADD COLUMN IF NOT EXISTS freshness_score     FLOAT;
+-- ALTER TABLE pain_signals ADD COLUMN IF NOT EXISTS final_rank_score    FLOAT;
+-- CREATE INDEX IF NOT EXISTS idx_pain_signals_rank_score ON pain_signals(final_rank_score DESC NULLS LAST);
+-- CREATE INDEX IF NOT EXISTS idx_pain_signals_created_at ON pain_signals(source_created_at DESC NULLS LAST);
 
 CREATE TABLE lead_scores (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

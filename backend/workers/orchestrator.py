@@ -227,6 +227,9 @@ async def run_pain_signal_pipeline() -> None:
     from pain_scrapers.review_scraper           import scrape_reviews
     from ai.pain_signal_analyzer                import analyze_batch
     from ai.pain_signal_outreach_writer         import generate_outreach_suggestions
+    from pain_scrapers.signal_ranker            import (
+        select_candidates_for_ai, compute_final_rank_score, log_selection_stats,
+    )
     from sqlalchemy import select
 
     all_signals: list[dict] = []
@@ -245,7 +248,24 @@ async def run_pain_signal_pipeline() -> None:
     if not all_signals:
         return
 
-    qualified = await analyze_batch(all_signals)
+    # --- Freshness filter + pre-AI ranking ---
+    to_analyze, rejected = select_candidates_for_ai(all_signals)
+    logger.info(
+        "Signal selection: %d raw → %d to AI, %d rejected",
+        len(all_signals), len(to_analyze), len(rejected),
+    )
+    if not to_analyze:
+        logger.warning("All signals rejected by selection layer — nothing to analyze")
+        return
+
+    qualified = await analyze_batch(to_analyze)
+
+    # --- Compute final rank score and sort best-first ---
+    for signal in qualified:
+        signal["final_rank_score"] = compute_final_rank_score(signal)
+    qualified.sort(key=lambda s: s.get("final_rank_score", 0), reverse=True)
+
+    log_selection_stats(len(all_signals), to_analyze, rejected, qualified)
 
     async with AsyncSessionLocal() as db:
         # Dedup by source_url to avoid re-inserting known signals
@@ -261,16 +281,19 @@ async def run_pain_signal_pipeline() -> None:
             if signal.get("source_url") and signal["source_url"] in existing_urls:
                 continue
             ps = PainSignal(
-                source           = signal["source"],
-                source_url       = signal.get("source_url"),
-                author           = signal.get("author"),
-                content          = signal["content"],
-                keywords_matched = signal.get("keywords_matched", []),
-                industry         = signal.get("industry"),
-                problem_desc     = signal.get("problem_desc"),
-                automation_opp   = signal.get("automation_opp"),
-                lead_potential   = signal.get("lead_potential"),
-                processed        = True,
+                source             = signal["source"],
+                source_url         = signal.get("source_url"),
+                author             = signal.get("author"),
+                content            = signal["content"],
+                keywords_matched   = signal.get("keywords_matched", []),
+                industry           = signal.get("industry"),
+                problem_desc       = signal.get("problem_desc"),
+                automation_opp     = signal.get("automation_opp"),
+                lead_potential     = signal.get("lead_potential"),
+                processed          = True,
+                source_created_at  = signal.get("source_created_at"),
+                freshness_score    = signal.get("freshness_score"),
+                final_rank_score   = signal.get("final_rank_score"),
             )
             db.add(ps)
             await db.flush()  # get ps.id before commit

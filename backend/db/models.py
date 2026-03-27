@@ -5,7 +5,7 @@ from typing import Optional, List
 
 from sqlalchemy import (
     String, Text, Integer, Float, Boolean, DateTime, Date,
-    ForeignKey, UniqueConstraint, Index
+    ForeignKey, UniqueConstraint, Index, Numeric
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
@@ -68,10 +68,14 @@ class PainSignal(Base):
     industry:        Mapped[Optional[str]]      = mapped_column(Text)
     problem_desc:    Mapped[Optional[str]]      = mapped_column(Text)
     automation_opp:  Mapped[Optional[str]]      = mapped_column(Text)
-    lead_potential:  Mapped[Optional[int]]      = mapped_column(Integer)
-    company_id:      Mapped[Optional[uuid.UUID]]= mapped_column(UUID(as_uuid=True), ForeignKey("companies.id"))
-    processed:       Mapped[bool]               = mapped_column(Boolean, default=False)
-    scraped_at:      Mapped[datetime]           = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    lead_potential:        Mapped[Optional[int]]      = mapped_column(Integer)
+    company_id:            Mapped[Optional[uuid.UUID]]= mapped_column(UUID(as_uuid=True), ForeignKey("companies.id"))
+    processed:             Mapped[bool]               = mapped_column(Boolean, default=False)
+    scraped_at:            Mapped[datetime]           = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    # Ranking / freshness metadata (additive — nullable for existing rows)
+    source_created_at:     Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    freshness_score:       Mapped[Optional[float]]    = mapped_column(Float, nullable=True)
+    final_rank_score:      Mapped[Optional[float]]    = mapped_column(Float, nullable=True)
 
     company: Mapped[Optional["Company"]] = relationship("Company", back_populates="pain_signals")
 

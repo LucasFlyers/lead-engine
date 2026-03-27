@@ -36,12 +36,13 @@ async def scrape_g2_reviews(client: httpx.AsyncClient, query: str) -> list[dict]
             matched = [kw for kw in PAIN_KEYWORDS if kw in text]
             if matched:
                 signals.append({
-                    "source": "g2",
-                    "source_url": url,
-                    "author": "anonymous",
-                    "content": review.get_text(strip=True)[:600],
+                    "source":           "g2",
+                    "source_url":       url,
+                    "author":           "anonymous",
+                    "content":          review.get_text(strip=True)[:600],
                     "keywords_matched": matched,
-                    "scraped_at": datetime.utcnow().isoformat(),
+                    "source_created_at":None,   # review sites don't expose timestamps
+                    "scraped_at":       datetime.utcnow().isoformat(),
                 })
     except Exception as e:
         logger.error(f"Error scraping G2: {e}")
@@ -63,12 +64,13 @@ async def scrape_capterra_reviews(client: httpx.AsyncClient, query: str) -> list
             matched = [kw for kw in PAIN_KEYWORDS if kw in text]
             if matched:
                 signals.append({
-                    "source": "capterra",
-                    "source_url": url,
-                    "author": "anonymous",
-                    "content": review.get_text(strip=True)[:600],
+                    "source":           "capterra",
+                    "source_url":       url,
+                    "author":           "anonymous",
+                    "content":          review.get_text(strip=True)[:600],
                     "keywords_matched": matched,
-                    "scraped_at": datetime.utcnow().isoformat(),
+                    "source_created_at":None,   # review sites don't expose timestamps
+                    "scraped_at":       datetime.utcnow().isoformat(),
                 })
     except Exception as e:
         logger.error(f"Error scraping Capterra: {e}")
