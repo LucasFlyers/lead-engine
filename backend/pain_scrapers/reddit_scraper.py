@@ -24,6 +24,8 @@ Backward-compatible output keys:
 """
 import asyncio
 import logging
+import os
+import random
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -154,37 +156,60 @@ _QUESTION_STARTERS = (
     "recommend", "suggestion", "advice",
 )
 
+# ---------------------------------------------------------------------------
+# ENV-CONFIGURABLE FETCH CONTROLS
+# ---------------------------------------------------------------------------
+# Override any of these in Railway / .env without touching code.
+_CONCURRENCY = int(os.getenv("REDDIT_FETCH_CONCURRENCY", "3"))
+_TIMEOUT     = float(os.getenv("REDDIT_REQUEST_TIMEOUT_SECONDS", "12"))
+_JITTER      = float(os.getenv("REDDIT_REQUEST_JITTER_SECONDS", "0.5"))
+
 # Tuning knobs — adjust without code changes
 LIMITS: dict = {
-    "semaphore":             4,      # max concurrent HTTP requests
-    "batch_size":            20,     # tasks dispatched per asyncio.gather call
+    "semaphore":             _CONCURRENCY,  # max concurrent HTTP requests
+    "batch_size":            10,     # tasks dispatched per asyncio.gather call
     "posts_per_feed":        30,     # posts fetched per hot/top feed
     "posts_per_search":      25,     # posts fetched per keyword search
     "min_relevance_score":   4,      # heuristic gate (0–13 scale)
     "max_comment_fetches":   120,    # cap total comment-fetch requests per run
     "max_comments_per_post": 4,      # top N comments to append per post
     "min_comment_len":       25,     # ignore stub comments shorter than this
-    "request_delay_s":       0.5,    # courtesy sleep after each HTTP call
-    "rate_limit_backoff_s":  15,     # extra sleep on HTTP 429
+    "request_delay_s":       0.8,    # courtesy sleep after each HTTP call
+    "request_jitter_s":      _JITTER,  # ± random jitter added to delay
+    "rate_limit_backoff_s":  20,     # extra sleep on HTTP 429
     "min_post_score":        -5,     # discard heavily downvoted posts
     "feeds_to_pull":         ["hot", "top"],  # feed sort modes
     "queries_per_layer":     4,      # queries used from each layer
     "feeds_threshold":       30,     # if feeds yield >= this, skip some searches
+    "request_timeout_s":     _TIMEOUT,
 }
 
-REDDIT_API = "https://www.reddit.com"
+# old.reddit.com bypasses the newer API bot-detection that blocks www.reddit.com.
+# raw_json=1 ensures clean unescaped JSON even on old.reddit.com.
+REDDIT_BASE = "https://old.reddit.com"
 
-# A realistic browser User-Agent avoids Reddit's bot-detection 403s.
-# The public JSON API rejects bots with custom UAs like "pain-signal-research/2.0".
+# Firefox UA is less scrutinised than Chrome on Reddit's JSON endpoints.
+# Keep centralized — updated here affects every request in the file.
+REDDIT_USER_AGENT = os.getenv(
+    "REDDIT_USER_AGENT",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+)
+
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept":          "application/json, text/javascript, */*",
-    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent":      REDDIT_USER_AGENT,
+    "Accept":          "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.5",
+    "DNT":             "1",
 }
+
+
+def _reddit_url(path: str) -> str:
+    """
+    Build a full old.reddit.com URL.
+    path should start with /r/... and NOT include a base domain.
+    raw_json=1 is appended as a query param by the caller via httpx params dict.
+    """
+    return f"{REDDIT_BASE}{path}"
 
 
 # ---------------------------------------------------------------------------
@@ -344,11 +369,21 @@ async def _get_json(
     All non-200 responses are logged at WARNING with status code, content-type,
     and the first 300 chars of the response body to aid debugging.
     """
+    # Always request raw unescaped JSON from old.reddit.com
+    merged_params = {"raw_json": "1", **params}
+
     async with sem:
         diag.attempts += 1
         try:
-            resp = await client.get(url, headers=HEADERS, params=params, timeout=20)
-            await asyncio.sleep(LIMITS["request_delay_s"])
+            resp = await client.get(
+                url,
+                headers=HEADERS,
+                params=merged_params,
+                timeout=LIMITS["request_timeout_s"],
+            )
+            # Jitter + base delay to avoid burst patterns
+            delay = LIMITS["request_delay_s"] + random.uniform(0, LIMITS["request_jitter_s"])
+            await asyncio.sleep(delay)
 
             if resp.status_code == 429:
                 backoff = LIMITS["rate_limit_backoff_s"]
@@ -370,10 +405,22 @@ async def _get_json(
                 return None
 
             diag.http_success += 1
+            ct = resp.headers.get("content-type", "")
+
+            # Warn when Reddit returns HTML on a 200 (e.g. login redirect)
+            if "text/html" in ct:
+                body = resp.text[:300].replace("\n", " ")
+                logger.warning(
+                    "Reddit returned HTML on 200: url=%s | content-type=%s | body=%r "
+                    "(possible redirect to login page — check UA / cookies)",
+                    url, ct, body,
+                )
+                diag.parse_failures += 1
+                return None
+
             try:
                 data = resp.json()
             except Exception as exc:
-                ct   = resp.headers.get("content-type", "unknown")
                 body = resp.text[:300].replace("\n", " ")
                 logger.warning(
                     "Reddit JSON parse failure: %s | url=%s | content-type=%s | body=%r",
@@ -411,9 +458,10 @@ async def _fetch_feed(
     Both text posts (is_self=True) and link posts are included — link post
     titles are sufficient for heuristic scoring.
     """
+    url = _reddit_url(f"/r/{subreddit}/{sort}.json")
     data = await _get_json(
         client,
-        f"{REDDIT_API}/r/{subreddit}/{sort}.json",
+        url,
         {"limit": LIMITS["posts_per_feed"], "t": "week"},
         sem,
         diag,
@@ -450,9 +498,10 @@ async def _fetch_search(
     Search a subreddit for a query string.
     Returns list of (raw_post_data, subreddit) tuples.
     """
+    url = _reddit_url(f"/r/{subreddit}/search.json")
     data = await _get_json(
         client,
-        f"{REDDIT_API}/r/{subreddit}/search.json",
+        url,
         {
             "q":           query,
             "sort":        "new",
@@ -499,7 +548,7 @@ async def _fetch_top_comments(
     """
     data = await _get_json(
         client,
-        f"{REDDIT_API}{permalink}.json",
+        _reddit_url(f"{permalink}.json"),
         {
             "limit": LIMITS["max_comments_per_post"] + 3,
             "depth": 1,
@@ -558,24 +607,33 @@ async def _probe_reddit(
     Returns True if the probe succeeded.
     """
     probe_sub = "smallbusiness"
-    logger.info("Reddit probe: testing connectivity via /r/%s/hot.json", probe_sub)
+    probe_url = _reddit_url(f"/r/{probe_sub}/hot.json")
+    logger.info("Reddit probe: GET %s?raw_json=1&limit=3", probe_url)
     data = await _get_json(
         client,
-        f"{REDDIT_API}/r/{probe_sub}/hot.json",
+        probe_url,
         {"limit": 3},
         sem,
         diag,
     )
     if isinstance(data, dict) and "data" in data:
         n = len(data["data"].get("children", []))
-        logger.info("Reddit probe: OK — got %d posts from /r/%s", n, probe_sub)
+        logger.info(
+            "Reddit probe SUCCESS — %d posts from /r/%s via %s",
+            n, probe_sub, REDDIT_BASE,
+        )
         return True
 
     logger.warning(
-        "Reddit probe FAILED — data type=%s, value preview=%r. "
-        "Check HEADERS / User-Agent / network access.",
+        "Reddit probe FAILED — type=%s preview=%r | "
+        "base=%s ua=%r | attempts=%d success=%d non200=%s",
         type(data).__name__,
         str(data)[:200] if data else None,
+        REDDIT_BASE,
+        REDDIT_USER_AGENT[:60],
+        diag.attempts,
+        diag.http_success,
+        dict(diag.non_200_by_code),
     )
     return False
 
