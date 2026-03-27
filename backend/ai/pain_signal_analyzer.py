@@ -12,8 +12,8 @@ client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 MODEL = os.environ.get("AI_MODEL", "gpt-4o-mini")
 SCORE_THRESHOLD = 7
 
-ANALYSIS_PROMPT = """You are a B2B sales development expert. Your job is to identify 
-Reddit posts from REAL BUSINESS OWNERS who need automation or software help and 
+ANALYSIS_PROMPT = """You are a B2B sales development expert. Your job is to identify
+Reddit posts from REAL BUSINESS OWNERS who need automation or software help and
 could become paying customers.
 
 Analyze this post:
@@ -21,8 +21,9 @@ Analyze this post:
 CONTENT:
 {content}
 
-SUBREDDIT: {subreddit}
+SUBREDDIT: r/{subreddit}
 SOURCE: {source}
+POST ENGAGEMENT: {post_score} upvotes, {num_comments} comments
 
 Respond ONLY with valid JSON:
 {{
@@ -74,9 +75,11 @@ async def analyze_pain_signal(signal: dict) -> Optional[dict]:
     """Analyze a single pain signal using AI."""
     try:
         prompt = ANALYSIS_PROMPT.format(
-            content=signal.get("content", "")[:1200],
+            content=signal.get("content", "")[:2000],
             subreddit=signal.get("subreddit", "unknown"),
             source=signal.get("source", ""),
+            post_score=signal.get("post_score", "?"),
+            num_comments=signal.get("num_comments", "?"),
         )
 
         response = await client.chat.completions.create(
