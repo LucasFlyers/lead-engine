@@ -306,8 +306,33 @@ async def run_pain_signal_pipeline() -> None:
 
         await db.commit()
 
-    # --- Create manual outreach queue items for newly persisted signals ---
+    # --- Create manual outreach queue items — DIRECT leads only ---
+    # Routing rules:
+    #   lead_type == "non_lead"  → already discarded by analyze_batch
+    #   lead_type == "indirect"  → stored above, skip outreach queue
+    #   lead_type == "direct" + is_outreach_ready == True → create queue item
+    #   lead_type == "direct" + is_outreach_ready == False → stored only
     for ps, signal in newly_added:
+        lead_type        = signal.get("lead_type", "direct")   # default direct for pre-new signals
+        is_ready         = signal.get("is_outreach_ready", False)
+        outreach_priority = signal.get("outreach_priority", "none")
+
+        if lead_type == "indirect":
+            logger.debug(
+                "Signal %s is indirect — stored but skipped for outreach queue",
+                ps.id,
+            )
+            continue
+
+        if not is_ready:
+            logger.debug(
+                "Signal %s is direct but not outreach-ready "
+                "(priority=%s, intent=%.1f) — stored only",
+                ps.id, outreach_priority,
+                signal.get("buyer_intent_score", 0),
+            )
+            continue
+
         # Generate AI suggestions first (non-blocking on failure)
         outreach_data: dict | None = None
         try:
@@ -339,17 +364,19 @@ async def run_pain_signal_pipeline() -> None:
                     **(outreach_data or {}),
                 )
                 db.add(item)
-                # Flush to detect constraint violations before adding the event
                 await db.flush()
 
                 event = SystemEvent(
                     event_type="pain_signal_outreach_created",
                     entity_type="pain_signal_outreach_queue",
-                    message="Manual outreach item created from qualified pain signal",
+                    message="Manual outreach item created from qualified direct lead",
                     event_metadata={
-                        "pain_signal_id":    str(ps.id),
-                        "source":            signal["source"],
-                        "lead_potential":    signal.get("lead_potential"),
+                        "pain_signal_id":     str(ps.id),
+                        "source":             signal["source"],
+                        "lead_potential":     signal.get("lead_potential"),
+                        "lead_type":          lead_type,
+                        "outreach_priority":  outreach_priority,
+                        "buyer_intent_score": signal.get("buyer_intent_score"),
                         "outreach_generated": outreach_data is not None,
                     },
                 )
