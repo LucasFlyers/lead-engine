@@ -199,3 +199,67 @@ class SystemEvent(Base):
     message:     Mapped[str]               = mapped_column(Text, nullable=False)
     event_metadata: Mapped[Optional[dict]]    = mapped_column(JSONB)
     created_at:  Mapped[datetime]          = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+# Valid status values — enforced in application layer
+REVIEW_STATUSES = {"unreviewed", "reviewing", "contact_found", "contact_not_found", "ready_to_send", "sent", "archived"}
+OUTREACH_STATUSES = {"not_started", "draft_ready", "sent", "replied", "closed", "abandoned"}
+OUTREACH_CHANNELS = {"email", "linkedin", "contact_form", "twitter", "phone", "other"}
+
+
+class PainSignalOutreachQueue(Base):
+    __tablename__ = "pain_signal_outreach_queue"
+
+    id:               Mapped[uuid.UUID]          = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pain_signal_id:   Mapped[uuid.UUID]          = mapped_column(UUID(as_uuid=True), ForeignKey("pain_signals.id", ondelete="CASCADE"), nullable=False, unique=True)
+
+    # Denormalised from pain_signal for fast reads (avoids join on every list call)
+    source:           Mapped[str]                = mapped_column(Text, nullable=False)
+    source_url:       Mapped[Optional[str]]      = mapped_column(Text)
+    author:           Mapped[Optional[str]]      = mapped_column(Text)
+    industry:         Mapped[Optional[str]]      = mapped_column(Text)
+    problem_desc:     Mapped[Optional[str]]      = mapped_column(Text)
+    automation_opp:   Mapped[Optional[str]]      = mapped_column(Text)
+    lead_potential:   Mapped[Optional[float]]    = mapped_column(Float)
+
+    # AI-generated outreach suggestions
+    target_contact_type:      Mapped[Optional[str]] = mapped_column(Text)
+    personalization_hook:     Mapped[Optional[str]] = mapped_column(Text)
+    suggested_subject:        Mapped[Optional[str]] = mapped_column(Text)
+    suggested_email_message:  Mapped[Optional[str]] = mapped_column(Text)
+    suggested_dm_message:     Mapped[Optional[str]] = mapped_column(Text)
+    recommended_cta:          Mapped[Optional[str]] = mapped_column(Text)
+    ai_reasoning:             Mapped[Optional[str]] = mapped_column(Text)
+    message_model_used:       Mapped[Optional[str]] = mapped_column(Text)
+
+    # Manual research / contact capture
+    manual_company_name:   Mapped[Optional[str]] = mapped_column(Text)
+    manual_contact_name:   Mapped[Optional[str]] = mapped_column(Text)
+    manual_contact_role:   Mapped[Optional[str]] = mapped_column(Text)
+    manual_contact_email:  Mapped[Optional[str]] = mapped_column(Text)
+    manual_contact_phone:  Mapped[Optional[str]] = mapped_column(Text)
+    manual_contact_linkedin: Mapped[Optional[str]] = mapped_column(Text)
+    manual_website:        Mapped[Optional[str]] = mapped_column(Text)
+    manual_notes:          Mapped[Optional[str]] = mapped_column(Text)
+
+    # Workflow state
+    review_status:    Mapped[str]                = mapped_column(Text, nullable=False, default="unreviewed")
+    outreach_channel: Mapped[Optional[str]]      = mapped_column(Text)
+    outreach_status:  Mapped[str]                = mapped_column(Text, nullable=False, default="not_started")
+
+    # Timestamps
+    created_at:           Mapped[datetime]           = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at:           Mapped[datetime]           = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    reviewed_at:          Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    contact_found_at:     Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    outreach_marked_at:   Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    pain_signal: Mapped["PainSignal"] = relationship("PainSignal", backref="outreach_queue_item", uselist=False)
+
+    __table_args__ = (
+        Index("idx_psoq_pain_signal_id",   "pain_signal_id"),
+        Index("idx_psoq_review_status",    "review_status"),
+        Index("idx_psoq_outreach_status",  "outreach_status"),
+        Index("idx_psoq_created_at",       "created_at"),
+        Index("idx_psoq_source_url",       "source_url"),
+    )

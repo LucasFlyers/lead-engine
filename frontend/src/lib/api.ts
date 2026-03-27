@@ -44,6 +44,28 @@ export const api = {
     },
     stats: () => apiFetch<PainSignalStats>("/pain-signals/stats"),
   },
+  painSignalOutreach: {
+    list: (params?: Record<string, string | number | boolean>) => {
+      const qs = params ? "?" + new URLSearchParams(
+        Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)]))
+      ).toString() : "";
+      return apiFetch<{ items: OutreachQueueItem[]; total: number; page: number; per_page: number }>(
+        `/pain-signal-outreach${qs}`
+      );
+    },
+    stats: () => apiFetch<OutreachQueueStats>("/pain-signal-outreach/stats"),
+    get: (id: string) => apiFetch<OutreachQueueItemDetail>(`/pain-signal-outreach/${id}`),
+    update: (id: string, payload: Partial<OutreachQueueUpdate>) =>
+      apiFetch<OutreachQueueItemDetail>(`/pain-signal-outreach/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    regenerate: (id: string) =>
+      apiFetch<OutreachQueueItemDetail>(`/pain-signal-outreach/${id}/regenerate-message`, {
+        method: "POST",
+      }),
+    copyReady: (id: string) => apiFetch<OutreachCopyReady>(`/pain-signal-outreach/${id}/copy-ready`),
+  },
   activity: {
     feed: (limit = 50) => apiFetch<{ events: ActivityEvent[] }>(`/activity/feed?limit=${limit}`),
   },
@@ -99,4 +121,89 @@ export interface PainSignalStats {
 export interface ActivityEvent {
   id: string; event_type: string; entity_type?: string;
   entity_id?: string; message: string; metadata?: Record<string, unknown>; created_at: string;
+}
+
+// ---- Pain Signal Manual Outreach Queue ----
+export type ReviewStatus =
+  | "unreviewed" | "reviewing" | "contact_found" | "contact_not_found"
+  | "ready_to_send" | "sent" | "archived";
+export type OutreachStatus = "not_started" | "draft_ready" | "sent" | "replied" | "closed" | "abandoned";
+export type OutreachChannel = "email" | "linkedin" | "contact_form" | "twitter" | "phone" | "other";
+
+export interface OutreachQueueItem {
+  id: string;
+  pain_signal_id: string;
+  source: string;
+  source_url?: string;
+  author?: string;
+  industry?: string;
+  problem_desc?: string;
+  automation_opp?: string;
+  lead_potential?: number;
+  target_contact_type?: string;
+  personalization_hook?: string;
+  suggested_subject?: string;
+  email_preview?: string;
+  dm_preview?: string;
+  recommended_cta?: string;
+  manual_company_name?: string;
+  manual_contact_name?: string;
+  manual_contact_role?: string;
+  manual_contact_email?: string;
+  has_contact: boolean;
+  review_status: ReviewStatus;
+  outreach_channel?: OutreachChannel;
+  outreach_status: OutreachStatus;
+  created_at: string;
+  updated_at: string;
+  reviewed_at?: string;
+  contact_found_at?: string;
+  outreach_marked_at?: string;
+}
+
+export interface OutreachQueueItemDetail extends OutreachQueueItem {
+  suggested_email_message?: string;
+  suggested_dm_message?: string;
+  ai_reasoning?: string;
+  message_model_used?: string;
+  manual_contact_phone?: string;
+  manual_contact_linkedin?: string;
+  manual_website?: string;
+  manual_notes?: string;
+  pain_signal?: {
+    id: string; source: string; source_url?: string; author?: string;
+    content: string; keywords_matched?: string[]; industry?: string;
+    problem_desc?: string; automation_opp?: string; lead_potential?: number;
+    scraped_at: string;
+  };
+}
+
+export interface OutreachQueueUpdate {
+  manual_company_name?: string;
+  manual_contact_name?: string;
+  manual_contact_role?: string;
+  manual_contact_email?: string;
+  manual_contact_phone?: string;
+  manual_contact_linkedin?: string;
+  manual_website?: string;
+  manual_notes?: string;
+  review_status?: ReviewStatus;
+  outreach_channel?: OutreachChannel;
+  outreach_status?: OutreachStatus;
+}
+
+export interface OutreachQueueStats {
+  total: number;
+  contacts_found: number;
+  by_review_status: { status: string; count: number }[];
+  by_outreach_status: { status: string; count: number }[];
+}
+
+export interface OutreachCopyReady {
+  subject?: string;
+  email_message?: string;
+  dm_message?: string;
+  personalization_hook?: string;
+  cta?: string;
+  source_url?: string;
 }

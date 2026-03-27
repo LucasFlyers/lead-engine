@@ -4,17 +4,18 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
   LayoutDashboard, Users, Zap, BarChart3,
-  Activity, Inbox, Settings, ChevronRight, Menu, X
+  Activity, Inbox, Settings, ChevronRight, Menu, X, MessageSquarePlus
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 const nav = [
-  { href: "/",             label: "Overview",     icon: LayoutDashboard },
-  { href: "/leads",        label: "Leads",        icon: Users },
-  { href: "/pain-signals", label: "Pain Signals", icon: Zap },
-  { href: "/campaigns",    label: "Campaigns",    icon: BarChart3 },
-  { href: "/inbox",        label: "Deliverability", icon: Inbox },
-  { href: "/activity",     label: "Activity",     icon: Activity },
+  { href: "/",                      label: "Overview",        icon: LayoutDashboard },
+  { href: "/leads",                 label: "Leads",           icon: Users },
+  { href: "/pain-signals",          label: "Pain Signals",    icon: Zap },
+  { href: "/pain-signal-outreach",  label: "Manual Outreach", icon: MessageSquarePlus },
+  { href: "/campaigns",             label: "Campaigns",       icon: BarChart3 },
+  { href: "/inbox",                 label: "Deliverability",  icon: Inbox },
+  { href: "/activity",              label: "Activity",        icon: Activity },
 ];
 
 function NavLink({ href, label, icon: Icon, active }: { href: string; label: string; icon: React.ElementType; active: boolean }) {

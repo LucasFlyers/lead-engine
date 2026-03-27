@@ -211,3 +211,64 @@ CREATE INDEX IF NOT EXISTS idx_system_events_type_date ON system_events(event_ty
 -- Performance: partial index for active queue items
 CREATE INDEX IF NOT EXISTS idx_queue_pending ON outreach_queue(priority DESC, created_at ASC)
     WHERE status = 'pending';
+
+-- ============================================================
+-- PAIN SIGNAL MANUAL OUTREACH QUEUE
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS pain_signal_outreach_queue (
+    id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    pain_signal_id          UUID NOT NULL REFERENCES pain_signals(id) ON DELETE CASCADE,
+
+    -- Denormalised pain signal fields for fast list reads
+    source                  TEXT NOT NULL,
+    source_url              TEXT,
+    author                  TEXT,
+    industry                TEXT,
+    problem_desc            TEXT,
+    automation_opp          TEXT,
+    lead_potential          FLOAT,
+
+    -- AI-generated outreach suggestions
+    target_contact_type     TEXT,
+    personalization_hook    TEXT,
+    suggested_subject       TEXT,
+    suggested_email_message TEXT,
+    suggested_dm_message    TEXT,
+    recommended_cta         TEXT,
+    ai_reasoning            TEXT,
+    message_model_used      TEXT,
+
+    -- Manual research / contact capture
+    manual_company_name     TEXT,
+    manual_contact_name     TEXT,
+    manual_contact_role     TEXT,
+    manual_contact_email    TEXT,
+    manual_contact_phone    TEXT,
+    manual_contact_linkedin TEXT,
+    manual_website          TEXT,
+    manual_notes            TEXT,
+
+    -- Workflow state
+    -- review_status: unreviewed | reviewing | contact_found | contact_not_found | ready_to_send | sent | archived
+    review_status           TEXT NOT NULL DEFAULT 'unreviewed',
+    -- outreach_channel: email | linkedin | contact_form | twitter | phone | other
+    outreach_channel        TEXT,
+    -- outreach_status: not_started | draft_ready | sent | replied | closed | abandoned
+    outreach_status         TEXT NOT NULL DEFAULT 'not_started',
+
+    -- Timestamps
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reviewed_at             TIMESTAMPTZ,
+    contact_found_at        TIMESTAMPTZ,
+    outreach_marked_at      TIMESTAMPTZ,
+
+    UNIQUE(pain_signal_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_psoq_pain_signal_id  ON pain_signal_outreach_queue(pain_signal_id);
+CREATE INDEX IF NOT EXISTS idx_psoq_review_status   ON pain_signal_outreach_queue(review_status);
+CREATE INDEX IF NOT EXISTS idx_psoq_outreach_status ON pain_signal_outreach_queue(outreach_status);
+CREATE INDEX IF NOT EXISTS idx_psoq_created_at      ON pain_signal_outreach_queue(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_psoq_source_url      ON pain_signal_outreach_queue(source_url);

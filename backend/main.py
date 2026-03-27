@@ -11,12 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from api.routes.activity     import router as activity_router
-from api.routes.campaigns    import router as campaigns_router
-from api.routes.inbox        import router as inbox_router
-from api.routes.leads        import router as leads_router
-from api.routes.pain_signals import router as pain_signals_router
-from db.database             import check_db_health, init_db, AsyncSessionLocal
+from api.routes.activity              import router as activity_router
+from api.routes.campaigns             import router as campaigns_router
+from api.routes.inbox                 import router as inbox_router
+from api.routes.leads                 import router as leads_router
+from api.routes.pain_signals          import router as pain_signals_router
+from api.routes.pain_signal_outreach  import router as pain_signal_outreach_router
+from db.database                      import check_db_health, init_db, AsyncSessionLocal
 
 # Configure basic logging immediately so startup errors are visible
 logging.basicConfig(
@@ -121,11 +122,12 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 PREFIX = "/api/v1"
-app.include_router(leads_router,        prefix=PREFIX)
-app.include_router(campaigns_router,    prefix=PREFIX)
-app.include_router(inbox_router,        prefix=PREFIX)
-app.include_router(pain_signals_router, prefix=PREFIX)
-app.include_router(activity_router,     prefix=PREFIX)
+app.include_router(leads_router,                prefix=PREFIX)
+app.include_router(campaigns_router,            prefix=PREFIX)
+app.include_router(inbox_router,                prefix=PREFIX)
+app.include_router(pain_signals_router,         prefix=PREFIX)
+app.include_router(pain_signal_outreach_router, prefix=PREFIX)
+app.include_router(activity_router,             prefix=PREFIX)
 
 
 @app.get("/health", tags=["system"])

@@ -16,9 +16,12 @@ import os
 import time
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
+
 from db.database import AsyncSessionLocal
 from db.models import (
     Company, Contact, LeadScore, OutreachQueue, PainSignal, SystemEvent,
+    PainSignalOutreachQueue,
 )
 
 logger = logging.getLogger(__name__)
@@ -219,10 +222,11 @@ async def run_pain_signal_pipeline() -> None:
     t0 = time.monotonic()
     logger.info("=== Pain signal pipeline START ===")
 
-    from pain_scrapers.reddit_scraper  import scrape_reddit
-    from pain_scrapers.forum_scraper   import scrape_forums
-    from pain_scrapers.review_scraper  import scrape_reviews
-    from ai.pain_signal_analyzer       import analyze_batch
+    from pain_scrapers.reddit_scraper           import scrape_reddit
+    from pain_scrapers.forum_scraper            import scrape_forums
+    from pain_scrapers.review_scraper           import scrape_reviews
+    from ai.pain_signal_analyzer                import analyze_batch
+    from ai.pain_signal_outreach_writer         import generate_outreach_suggestions
     from sqlalchemy import select
 
     all_signals: list[dict] = []
@@ -251,10 +255,12 @@ async def run_pain_signal_pipeline() -> None:
         existing_urls = {r[0] for r in existing_urls_result.all()}
 
         new_signals = 0
+        newly_added: list[tuple[PainSignal, dict]] = []  # (orm obj, raw signal dict)
+
         for signal in qualified:
             if signal.get("source_url") and signal["source_url"] in existing_urls:
                 continue
-            db.add(PainSignal(
+            ps = PainSignal(
                 source           = signal["source"],
                 source_url       = signal.get("source_url"),
                 author           = signal.get("author"),
@@ -265,7 +271,10 @@ async def run_pain_signal_pipeline() -> None:
                 automation_opp   = signal.get("automation_opp"),
                 lead_potential   = signal.get("lead_potential"),
                 processed        = True,
-            ))
+            )
+            db.add(ps)
+            await db.flush()  # get ps.id before commit
+            newly_added.append((ps, signal))
             new_signals += 1
             await _log_event(
                 db, "pain_signal_found",
@@ -273,6 +282,69 @@ async def run_pain_signal_pipeline() -> None:
             )
 
         await db.commit()
+
+    # --- Create manual outreach queue items for newly persisted signals ---
+    for ps, signal in newly_added:
+        # Generate AI suggestions first (non-blocking on failure)
+        outreach_data: dict | None = None
+        try:
+            outreach_data = await generate_outreach_suggestions(signal)
+            if outreach_data is None:
+                logger.warning(
+                    "Outreach writer returned None for signal %s (source=%s) — "
+                    "queue item will be created without AI suggestions",
+                    ps.id, signal.get("source"),
+                )
+        except Exception as exc:
+            logger.warning(
+                "Outreach writer raised for signal %s: %s — "
+                "queue item will be created without AI suggestions",
+                ps.id, exc,
+            )
+
+        async with AsyncSessionLocal() as db:
+            try:
+                item = PainSignalOutreachQueue(
+                    pain_signal_id = ps.id,
+                    source         = signal["source"],
+                    source_url     = signal.get("source_url"),
+                    author         = signal.get("author"),
+                    industry       = signal.get("industry"),
+                    problem_desc   = signal.get("problem_desc"),
+                    automation_opp = signal.get("automation_opp"),
+                    lead_potential = signal.get("lead_potential"),
+                    **(outreach_data or {}),
+                )
+                db.add(item)
+                # Flush to detect constraint violations before adding the event
+                await db.flush()
+
+                event = SystemEvent(
+                    event_type="pain_signal_outreach_created",
+                    entity_type="pain_signal_outreach_queue",
+                    message="Manual outreach item created from qualified pain signal",
+                    event_metadata={
+                        "pain_signal_id":    str(ps.id),
+                        "source":            signal["source"],
+                        "lead_potential":    signal.get("lead_potential"),
+                        "outreach_generated": outreach_data is not None,
+                    },
+                )
+                db.add(event)
+                await db.commit()
+                logger.info(
+                    "Outreach queue item created for signal %s (AI suggestions: %s)",
+                    ps.id, outreach_data is not None,
+                )
+
+            except IntegrityError:
+                # Unique constraint on pain_signal_id — item already exists
+                # (e.g. concurrent worker run or reprocessed signal)
+                await db.rollback()
+                logger.debug("Outreach queue item already exists for signal %s — skipping", ps.id)
+            except Exception as exc:
+                await db.rollback()
+                logger.error("Failed to create outreach queue item for signal %s: %s", ps.id, exc)
 
     elapsed = time.monotonic() - t0
     logger.info("=== Pain signal pipeline DONE in %.1fs — %d new signals ===", elapsed, new_signals)

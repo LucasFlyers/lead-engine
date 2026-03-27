@@ -1,6 +1,6 @@
 "use client";
 import { PainSignal } from "@/lib/api";
-import { ArrowUpRight, Zap } from "lucide-react";
+import { ArrowUpRight, Zap, ExternalLink } from "lucide-react";
 
 const SOURCE_COLORS: Record<string, string> = {
   reddit:    "badge-violet",
@@ -37,13 +37,29 @@ export function PainSignalsTable({ signals }: { signals: PainSignal[] }) {
           }}>
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
               <p style={{ fontSize: 12.5, color: "var(--text-2)", lineHeight: 1.4, flex: 1 }}>
-                {signal.content.slice(0, 90)}{signal.content.length > 90 ? "…" : ""}
+                {signal.problem_desc
+                  ? signal.problem_desc.slice(0, 100) + (signal.problem_desc.length > 100 ? "…" : "")
+                  : signal.content.slice(0, 90) + (signal.content.length > 90 ? "…" : "")}
               </p>
-              {signal.lead_potential && (
-                <span className={`badge ${signal.lead_potential >= 8 ? "badge-green" : signal.lead_potential >= 6 ? "badge-amber" : "badge-muted"}`} style={{ flexShrink: 0 }}>
-                  {signal.lead_potential}/10
-                </span>
-              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                {signal.lead_potential && (
+                  <span className={`badge ${signal.lead_potential >= 8 ? "badge-green" : signal.lead_potential >= 6 ? "badge-amber" : "badge-muted"}`}>
+                    {signal.lead_potential}/10
+                  </span>
+                )}
+                {signal.source_url && (
+                  <a
+                    href={signal.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    title="Open original post"
+                    style={{ display: "flex", alignItems: "center", padding: "3px 7px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-3)", textDecoration: "none", fontSize: 11 }}
+                  >
+                    <ExternalLink size={11} />
+                  </a>
+                )}
+              </div>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
               <span className={`badge ${SOURCE_COLORS[signal.source] ?? "badge-muted"}`}>
