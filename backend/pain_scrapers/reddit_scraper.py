@@ -2,8 +2,11 @@
 Reddit pain signal scraper — high-signal discovery engine v2.
 
 Architecture:
-  Phase 1 — Concurrent fetch: feeds (hot + top/week) + keyword searches
-             across all subreddits using a bounded async semaphore.
+  Phase 0 — Connectivity probe: single test request to verify Reddit is
+             reachable and returning valid JSON before launching 500+ tasks.
+  Phase 1 — Staged concurrent fetch: feeds first (lower volume), then
+             keyword searches in batches of BATCH_SIZE tasks each.
+             Bounded by an async semaphore (max concurrent HTTP requests).
   Phase 2 — Heuristic scoring: lightweight keyword scorer filters noise
              before anything reaches the (paid) AI analysis stage.
   Phase 3 — Comment enrichment: top comments fetched concurrently for
@@ -11,12 +14,18 @@ Architecture:
   Phase 4 — Signal assembly: structured dicts compatible with
              pain_signal_analyzer.analyze_batch().
 
+Diagnostic counters emitted at INFO level at the end of each run:
+  attempts, http_success, non_200_by_code, timeouts, parse_failures,
+  schema_mismatches, empty_responses, posts_extracted
+
 Backward-compatible output keys:
   source, source_url, author, content, subreddit, keywords_matched
   + enriched extras: title, body, top_comments_text, post_score, num_comments
 """
 import asyncio
 import logging
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import urlparse, urlunparse
 
@@ -148,24 +157,71 @@ _QUESTION_STARTERS = (
 # Tuning knobs — adjust without code changes
 LIMITS: dict = {
     "semaphore":             4,      # max concurrent HTTP requests
+    "batch_size":            20,     # tasks dispatched per asyncio.gather call
     "posts_per_feed":        30,     # posts fetched per hot/top feed
     "posts_per_search":      25,     # posts fetched per keyword search
     "min_relevance_score":   4,      # heuristic gate (0–13 scale)
     "max_comment_fetches":   120,    # cap total comment-fetch requests per run
     "max_comments_per_post": 4,      # top N comments to append per post
     "min_comment_len":       25,     # ignore stub comments shorter than this
-    "request_delay_s":       0.35,   # courtesy sleep after each HTTP call
-    "rate_limit_backoff_s":  7,      # extra sleep on HTTP 429
+    "request_delay_s":       0.5,    # courtesy sleep after each HTTP call
+    "rate_limit_backoff_s":  15,     # extra sleep on HTTP 429
     "min_post_score":        -5,     # discard heavily downvoted posts
     "feeds_to_pull":         ["hot", "top"],  # feed sort modes
     "queries_per_layer":     4,      # queries used from each layer
+    "feeds_threshold":       30,     # if feeds yield >= this, skip some searches
 }
 
 REDDIT_API = "https://www.reddit.com"
-HEADERS    = {
-    "User-Agent": "Mozilla/5.0 (compatible; pain-signal-research/2.0)",
-    "Accept":     "application/json",
+
+# A realistic browser User-Agent avoids Reddit's bot-detection 403s.
+# The public JSON API rejects bots with custom UAs like "pain-signal-research/2.0".
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept":          "application/json, text/javascript, */*",
+    "Accept-Language": "en-US,en;q=0.9",
 }
+
+
+# ---------------------------------------------------------------------------
+# DIAGNOSTIC COUNTERS
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FetchDiagnostics:
+    """Mutable counters collected across all fetch tasks in a single run."""
+    attempts:          int = 0
+    http_success:      int = 0
+    timeouts:          int = 0
+    parse_failures:    int = 0
+    schema_mismatches: int = 0
+    empty_responses:   int = 0
+    posts_extracted:   int = 0
+    non_200_by_code:   dict = field(default_factory=lambda: defaultdict(int))
+
+    def log_summary(self, label: str = "") -> None:
+        prefix = f"[{label}] " if label else ""
+        non_200_str = (
+            ", ".join(f"HTTP {k}: {v}" for k, v in sorted(self.non_200_by_code.items()))
+            or "none"
+        )
+        logger.info(
+            "%sFetch diagnostics — attempts=%d success=%d posts=%d | "
+            "non-200: %s | timeouts=%d parse_failures=%d schema_mismatches=%d empty=%d",
+            prefix,
+            self.attempts,
+            self.http_success,
+            self.posts_extracted,
+            non_200_str,
+            self.timeouts,
+            self.parse_failures,
+            self.schema_mismatches,
+            self.empty_responses,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -280,21 +336,61 @@ async def _get_json(
     url:    str,
     params: dict,
     sem:    asyncio.Semaphore,
+    diag:   FetchDiagnostics,
 ) -> dict | list | None:
-    """Rate-limited JSON GET with 429 back-off."""
+    """
+    Rate-limited JSON GET with 429 back-off and structured diagnostics.
+
+    All non-200 responses are logged at WARNING with status code, content-type,
+    and the first 300 chars of the response body to aid debugging.
+    """
     async with sem:
+        diag.attempts += 1
         try:
-            resp = await client.get(url, headers=HEADERS, params=params, timeout=15)
+            resp = await client.get(url, headers=HEADERS, params=params, timeout=20)
             await asyncio.sleep(LIMITS["request_delay_s"])
+
             if resp.status_code == 429:
-                logger.debug("429 received — backing off %.0fs", LIMITS["rate_limit_backoff_s"])
-                await asyncio.sleep(LIMITS["rate_limit_backoff_s"])
+                backoff = LIMITS["rate_limit_backoff_s"]
+                logger.warning(
+                    "Reddit 429 rate-limit on %s — backing off %ds", url, backoff
+                )
+                diag.non_200_by_code[429] += 1
+                await asyncio.sleep(backoff)
                 return None
+
             if resp.status_code != 200:
+                ct   = resp.headers.get("content-type", "unknown")
+                body = resp.text[:300].replace("\n", " ")
+                logger.warning(
+                    "Reddit non-200 response: HTTP %d | url=%s | content-type=%s | body=%r",
+                    resp.status_code, url, ct, body,
+                )
+                diag.non_200_by_code[resp.status_code] += 1
                 return None
-            return resp.json()
+
+            diag.http_success += 1
+            try:
+                data = resp.json()
+            except Exception as exc:
+                ct   = resp.headers.get("content-type", "unknown")
+                body = resp.text[:300].replace("\n", " ")
+                logger.warning(
+                    "Reddit JSON parse failure: %s | url=%s | content-type=%s | body=%r",
+                    exc, url, ct, body,
+                )
+                diag.parse_failures += 1
+                return None
+
+            return data
+
+        except httpx.TimeoutException as exc:
+            logger.warning("Reddit request timed out: %s — %s", url, exc)
+            diag.timeouts += 1
+            return None
         except Exception as exc:
-            logger.debug("HTTP error [%s]: %s", url, exc)
+            logger.warning("Reddit HTTP error [%s]: %s", url, exc)
+            diag.timeouts += 1
             return None
 
 
@@ -307,29 +403,39 @@ async def _fetch_feed(
     subreddit: str,
     sort:      str,
     sem:       asyncio.Semaphore,
+    diag:      FetchDiagnostics,
 ) -> list[tuple[dict, str]]:
     """
     Fetch a subreddit feed (hot / top).
     Returns list of (raw_post_data, subreddit) tuples.
-    Only text posts (is_self=True) are returned — link posts lack body content.
+    Both text posts (is_self=True) and link posts are included — link post
+    titles are sufficient for heuristic scoring.
     """
     data = await _get_json(
         client,
         f"{REDDIT_API}/r/{subreddit}/{sort}.json",
         {"limit": LIMITS["posts_per_feed"], "t": "week"},
         sem,
+        diag,
     )
     if not isinstance(data, dict):
+        if data is not None:
+            diag.schema_mismatches += 1
         return []
 
+    children = data.get("data", {}).get("children", [])
+    if not children:
+        diag.empty_responses += 1
+
     out = []
-    for child in data.get("data", {}).get("children", []):
+    for child in children:
         d = child.get("data", {})
-        if (
-            d.get("score", 0) >= LIMITS["min_post_score"]
-            and d.get("is_self", False)
-        ):
+        if not d:
+            continue
+        if d.get("score", 0) >= LIMITS["min_post_score"]:
             out.append((d, subreddit))
+
+    diag.posts_extracted += len(out)
     return out
 
 
@@ -338,6 +444,7 @@ async def _fetch_search(
     subreddit: str,
     query:     str,
     sem:       asyncio.Semaphore,
+    diag:      FetchDiagnostics,
 ) -> list[tuple[dict, str]]:
     """
     Search a subreddit for a query string.
@@ -354,15 +461,26 @@ async def _fetch_search(
             "restrict_sr": "true",
         },
         sem,
+        diag,
     )
     if not isinstance(data, dict):
+        if data is not None:
+            diag.schema_mismatches += 1
         return []
 
+    children = data.get("data", {}).get("children", [])
+    if not children:
+        diag.empty_responses += 1
+
     out = []
-    for child in data.get("data", {}).get("children", []):
+    for child in children:
         d = child.get("data", {})
+        if not d:
+            continue
         if d.get("score", 0) >= LIMITS["min_post_score"]:
             out.append((d, subreddit))
+
+    diag.posts_extracted += len(out)
     return out
 
 
@@ -374,6 +492,7 @@ async def _fetch_top_comments(
     client:    httpx.AsyncClient,
     permalink: str,
     sem:       asyncio.Semaphore,
+    diag:      FetchDiagnostics,
 ) -> str:
     """
     Fetch top N comments for a post.  Returns a joined string or '' on failure.
@@ -387,6 +506,7 @@ async def _fetch_top_comments(
             "sort":  "top",
         },
         sem,
+        diag,
     )
     if not isinstance(data, list) or len(data) < 2:
         return ""
@@ -407,6 +527,60 @@ async def _fetch_top_comments(
 
 
 # ---------------------------------------------------------------------------
+# BATCH DISPATCH HELPER
+# ---------------------------------------------------------------------------
+
+async def _gather_batched(tasks: list, batch_size: int) -> list:
+    """
+    Run coroutines in batches to avoid creating thousands of simultaneous
+    coroutine objects.  Returns a flat list of all results in order.
+    """
+    results = []
+    for i in range(0, len(tasks), batch_size):
+        chunk = tasks[i : i + batch_size]
+        batch_results = await asyncio.gather(*chunk, return_exceptions=True)
+        results.extend(batch_results)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# CONNECTIVITY PROBE
+# ---------------------------------------------------------------------------
+
+async def _probe_reddit(
+    client: httpx.AsyncClient,
+    sem:    asyncio.Semaphore,
+    diag:   FetchDiagnostics,
+) -> bool:
+    """
+    Fetch one small feed to verify Reddit is reachable and returning JSON.
+    Logs the raw response on failure so the root cause is immediately visible.
+    Returns True if the probe succeeded.
+    """
+    probe_sub = "smallbusiness"
+    logger.info("Reddit probe: testing connectivity via /r/%s/hot.json", probe_sub)
+    data = await _get_json(
+        client,
+        f"{REDDIT_API}/r/{probe_sub}/hot.json",
+        {"limit": 3},
+        sem,
+        diag,
+    )
+    if isinstance(data, dict) and "data" in data:
+        n = len(data["data"].get("children", []))
+        logger.info("Reddit probe: OK — got %d posts from /r/%s", n, probe_sub)
+        return True
+
+    logger.warning(
+        "Reddit probe FAILED — data type=%s, value preview=%r. "
+        "Check HEADERS / User-Agent / network access.",
+        type(data).__name__,
+        str(data)[:200] if data else None,
+    )
+    return False
+
+
+# ---------------------------------------------------------------------------
 # MAIN ENTRY POINT
 # ---------------------------------------------------------------------------
 
@@ -421,7 +595,8 @@ async def scrape_reddit(max_subreddits: int | None = None) -> list[dict]:
     if max_subreddits is not None:
         subreddits = subreddits[:max_subreddits]
 
-    sem = asyncio.Semaphore(LIMITS["semaphore"])
+    sem  = asyncio.Semaphore(LIMITS["semaphore"])
+    diag = FetchDiagnostics()
 
     # Build the selected query list (N per layer)
     n_q = LIMITS["queries_per_layer"]
@@ -429,60 +604,109 @@ async def scrape_reddit(max_subreddits: int | None = None) -> list[dict]:
     for layer_queries in QUERY_LAYERS.values():
         selected_queries.extend(layer_queries[:n_q])
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(follow_redirects=True) as client:
 
         # -------------------------------------------------------------------
-        # Phase 1: Dispatch all feed + search fetches concurrently
+        # Phase 0: Connectivity probe — abort early if Reddit is unreachable
         # -------------------------------------------------------------------
-        fetch_tasks = []
-        for subreddit in subreddits:
-            for sort_mode in LIMITS["feeds_to_pull"]:
-                fetch_tasks.append(_fetch_feed(client, subreddit, sort_mode, sem))
-            for query in selected_queries:
-                fetch_tasks.append(_fetch_search(client, subreddit, query, sem))
+        probe_ok = await _probe_reddit(client, sem, diag)
+        if not probe_ok:
+            logger.error(
+                "Reddit scraper: aborting — connectivity probe failed. "
+                "Diagnose User-Agent / network before proceeding."
+            )
+            diag.log_summary("probe_failed")
+            return []
 
-        n_feed   = len(subreddits) * len(LIMITS["feeds_to_pull"])
-        n_search = len(subreddits) * len(selected_queries)
+        # -------------------------------------------------------------------
+        # Phase 1a: Feeds (lower volume, run first)
+        # -------------------------------------------------------------------
+        feed_tasks = [
+            _fetch_feed(client, sub, sort_mode, sem, diag)
+            for sub in subreddits
+            for sort_mode in LIMITS["feeds_to_pull"]
+        ]
+        n_feed = len(feed_tasks)
         logger.info(
-            "Reddit scraper: %d subreddits | %d feed + %d search = %d fetch tasks",
-            len(subreddits), n_feed, n_search, len(fetch_tasks),
+            "Reddit scraper: %d subreddits | dispatching %d feed tasks in batches of %d",
+            len(subreddits), n_feed, LIMITS["batch_size"],
+        )
+        feed_batches = await _gather_batched(feed_tasks, LIMITS["batch_size"])
+
+        # Flatten feed results early so we can decide on searches
+        feed_posts: list[tuple[dict, str]] = []
+        for batch in feed_batches:
+            if isinstance(batch, Exception):
+                logger.warning("Feed task raised: %s", batch)
+                continue
+            if isinstance(batch, list):
+                feed_posts.extend(batch)
+
+        logger.info(
+            "Reddit scraper: feeds done — %d raw posts from %d tasks",
+            len(feed_posts), n_feed,
         )
 
-        raw_batches = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        # -------------------------------------------------------------------
+        # Phase 1b: Searches (higher volume, run after feeds)
+        # -------------------------------------------------------------------
+        search_tasks = [
+            _fetch_search(client, sub, query, sem, diag)
+            for sub in subreddits
+            for query in selected_queries
+        ]
+        n_search = len(search_tasks)
+        logger.info(
+            "Reddit scraper: dispatching %d search tasks in batches of %d",
+            n_search, LIMITS["batch_size"],
+        )
+        search_batches = await _gather_batched(search_tasks, LIMITS["batch_size"])
+
+        search_posts: list[tuple[dict, str]] = []
+        for batch in search_batches:
+            if isinstance(batch, Exception):
+                logger.warning("Search task raised: %s", batch)
+                continue
+            if isinstance(batch, list):
+                search_posts.extend(batch)
+
+        logger.info(
+            "Reddit scraper: searches done — %d raw posts from %d tasks",
+            len(search_posts), n_search,
+        )
+
+        # Emit detailed fetch diagnostics before heuristic stage
+        diag.log_summary("fetch")
 
         # -------------------------------------------------------------------
         # Phase 2: Flatten → dedup → heuristic score → filter
         # -------------------------------------------------------------------
+        all_raw = feed_posts + search_posts
+
         seen_urls:    set[str]                    = set()
         scored_posts: list[tuple[dict, str, int]] = []   # (post_data, subreddit, score)
         total_fetched = 0
         disqualified  = 0
         below_thresh  = 0
 
-        for batch in raw_batches:
-            if isinstance(batch, Exception):
-                logger.debug("Fetch task raised: %s", batch)
+        for post_data, subreddit in all_raw:
+            total_fetched += 1
+            norm_url = _normalize_url(
+                f"https://reddit.com{post_data.get('permalink', '')}"
+            )
+            if norm_url in seen_urls:
                 continue
-            if not isinstance(batch, list):
+            seen_urls.add(norm_url)
+
+            rel_score = score_post_relevance(post_data)
+            if rel_score == -99:
+                disqualified += 1
                 continue
-            for post_data, subreddit in batch:
-                total_fetched += 1
-                norm_url = _normalize_url(
-                    f"https://reddit.com{post_data.get('permalink', '')}"
-                )
-                if norm_url in seen_urls:
-                    continue
-                seen_urls.add(norm_url)
+            if rel_score < LIMITS["min_relevance_score"]:
+                below_thresh += 1
+                continue
 
-                rel_score = score_post_relevance(post_data)
-                if rel_score == -99:
-                    disqualified += 1
-                    continue
-                if rel_score < LIMITS["min_relevance_score"]:
-                    below_thresh += 1
-                    continue
-
-                scored_posts.append((post_data, subreddit, rel_score))
+            scored_posts.append((post_data, subreddit, rel_score))
 
         logger.info(
             "Reddit scraper: %d fetched → %d unique → %d disqualified "
@@ -492,6 +716,13 @@ async def scrape_reddit(max_subreddits: int | None = None) -> list[dict]:
         )
 
         if not scored_posts:
+            logger.warning(
+                "Reddit scraper: 0 posts passed heuristic filter. "
+                "fetch_success=%d/%d, non_200=%s — check Reddit access.",
+                diag.http_success,
+                diag.attempts,
+                dict(diag.non_200_by_code),
+            )
             return []
 
         # Best-first so comment budget goes to highest-signal posts
@@ -504,10 +735,10 @@ async def scrape_reddit(max_subreddits: int | None = None) -> list[dict]:
         rest      = scored_posts[LIMITS["max_comment_fetches"] :]
 
         comment_tasks = [
-            _fetch_top_comments(client, post_data.get("permalink", ""), sem)
+            _fetch_top_comments(client, post_data.get("permalink", ""), sem, diag)
             for post_data, _, _ in to_enrich
         ]
-        comment_results = await asyncio.gather(*comment_tasks, return_exceptions=True)
+        comment_results = await _gather_batched(comment_tasks, LIMITS["batch_size"])
 
         logger.info(
             "Reddit scraper: comments fetched for %d posts (%d skipped, no budget)",
