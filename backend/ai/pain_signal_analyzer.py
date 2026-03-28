@@ -78,6 +78,8 @@ def _default_buyer_role(pain_type: str) -> str:
 # Rule-based pre-filter
 # ---------------------------------------------------------------------------
 
+# Absolute hard rejects — checked against full title+body text.
+# Keep this list tight: only patterns where NO pain context can redeem them.
 _HARD_REJECT_PATTERNS: list[tuple[str, str]] = [
     # Job seeking
     ("job_seeking",  "looking for a job"),
@@ -90,26 +92,7 @@ _HARD_REJECT_PATTERNS: list[tuple[str, str]] = [
     ("hiring",       "we're hiring"),
     ("hiring",       "job opening"),
     ("hiring",       "join our team"),
-    # Builder / launch (creator not buyer)
-    ("builder",      "i built"),
-    ("builder",      "i made"),
-    ("builder",      "i created"),
-    ("builder",      "i automated"),
-    ("builder",      "i just launched"),
-    ("builder",      "i wrote a"),
-    ("builder",      "my tool"),
-    ("builder",      "my app"),
-    ("builder",      "my saas"),
-    ("builder",      "how i automated"),
-    ("builder",      "how i built"),
-    # Product promotion
-    ("promo",        "product hunt"),
-    ("promo",        "show hn"),
-    ("promo",        "announcing"),
-    ("promo",        "we just launched"),
-    ("promo",        "check out my"),
-    ("promo",        "check out our"),
-    # Selling / agency flex
+    # Selling / agency flex — these are sellers, not buyers
     ("selling",      "i helped a client"),
     ("selling",      "i helped my client"),
     ("selling",      "we helped our client"),
@@ -123,17 +106,39 @@ _HARD_REJECT_PATTERNS: list[tuple[str, str]] = [
     ("student",      "my homework"),
     ("student",      "my assignment"),
     ("student",      "for school"),
-    # Pure success stories (historical, not active pain)
-    ("success",      "we saved"),
-    ("success",      "i saved"),
-    ("success",      "case study"),
-    ("success",      "success story"),
     # Personal / unrelated
     ("personal",     "my relationship"),
     ("personal",     "my girlfriend"),
     ("personal",     "my boyfriend"),
     ("personal",     "divorce"),
     ("personal",     "breakup"),
+]
+
+# Patterns checked against TITLE ONLY.
+# If found in the title AND the full text has no pain context, reject.
+# If pain context exists → keep and hint AI that this is an indirect signal.
+_TITLE_LAUNCH_PATTERNS: list[str] = [
+    "i launched", "we launched", "just launched",
+    "introducing",
+    "just shipped", "i just shipped", "we just shipped",
+    "show ih:", "show hn:",
+    "v2 is live", "v2 launch",
+]
+
+_TITLE_BUILDER_PATTERNS: list[str] = [
+    "i built", "i made", "i created", "i automated",
+    "how i automated", "how i built",
+    "my tool", "my app", "my saas",
+]
+
+# If ANY of these appear in full text, a launch/builder title is kept
+# as an INDIRECT signal rather than rejected.
+_PAIN_EXCEPTION_PHRASES: list[str] = [
+    "because", "struggled", "problem", "couldn't find",
+    "manual", "took too long", "wasting", "needed",
+    "missing", "broken", "frustrating", "chaos",
+    "hours", "spreadsheet", "follow up", "clients",
+    "process", "admin", "workflow", "repetitive",
 ]
 
 _STRONG_POSITIVE_HINTS: list[str] = [
@@ -149,11 +154,19 @@ def _pre_filter(signal: dict) -> tuple[bool, str]:
     Returns (reject, hint_str).
     reject=True  → skip AI entirely, return fallback with lead_type="non_lead".
     hint_str     → appended to prompt for context on borderline signals.
+
+    Strategy:
+    - Absolute hard rejects (full text): job seeking, hiring, selling — no exception.
+    - Launch/builder patterns: checked on TITLE only.
+        - If title matches AND body has pain context → keep as INDIRECT hint.
+        - If title matches AND no pain context → reject.
+    - Builder phrases in BODY only (not title) → not rejected; AI decides.
     """
     title     = (signal.get("title") or "").lower()
     body      = (signal.get("body") or signal.get("content") or "").lower()
     full_text = f"{title} {body}"
 
+    # Absolute rejects
     for category, pattern in _HARD_REJECT_PATTERNS:
         if pattern in full_text:
             logger.debug("Pre-filter REJECT [%s]: '%s'", category, pattern)
@@ -161,6 +174,25 @@ def _pre_filter(signal: dict) -> tuple[bool, str]:
 
     if len(full_text.strip()) < 50:
         return True, ""
+
+    # Title-based launch / builder filter with pain exception
+    is_launch_title  = any(p in title for p in _TITLE_LAUNCH_PATTERNS)
+    is_builder_title = any(p in title for p in _TITLE_BUILDER_PATTERNS)
+
+    if is_launch_title or is_builder_title:
+        has_pain = any(p in full_text for p in _PAIN_EXCEPTION_PHRASES)
+        if not has_pain:
+            logger.debug(
+                "Pre-filter REJECT [launch/builder, no pain context]: %r", title[:70]
+            )
+            return True, ""
+        # Pain context present — keep but tell AI this is likely indirect
+        found = [h for h in _STRONG_POSITIVE_HINTS if h in full_text]
+        hint  = (
+            "[Indirect signal: launch/builder title but pain context present. "
+            f"Pain hints: {', '.join(found[:6]) or 'see body'}]"
+        )
+        return False, hint
 
     found = [h for h in _STRONG_POSITIVE_HINTS if h in full_text]
     hint  = f"[Pre-filter hints: {', '.join(found[:6])}]" if found else ""
@@ -175,11 +207,12 @@ _PROMPT_TEMPLATE = """\
 You are a B2B lead qualification specialist for a small workflow automation agency.
 
 Your job: determine whether this post represents a VIABLE OUTREACH OPPORTUNITY.
-Be strict. Most posts do NOT qualify.
+Most posts from founder communities describe real operational problems — lean toward
+finding the signal rather than dismissing it.
 
 === INPUT ===
 
-SUBREDDIT: r/{subreddit}
+SOURCE: {subreddit}
 ENGAGEMENT: {post_score} upvotes, {num_comments} comments
 HEURISTIC KEYWORDS: {keywords}
 {pre_filter_hint}
@@ -197,66 +230,87 @@ TOP COMMENTS:
 Classify into EXACTLY ONE of:
 
 DIRECT:
-The author is CURRENTLY experiencing an ONGOING business workflow problem.
-They have NOT solved it yet. They are actively living with the pain or asking for help.
+The author is CURRENTLY experiencing an ONGOING business workflow problem they
+have NOT fully solved. They are actively living with the pain, asking for help,
+or seeking a better solution right now.
+  Strong signals: present-tense frustration, asking for tool recommendations,
+  describing a broken current process, saying "I need", "we struggle with",
+  "still doing manually", "keeps falling through the cracks"
   Examples: "I'm drowning in invoices", "we keep missing follow-ups",
-  "our process is completely manual", "I need a better system for this"
+  "our onboarding is completely manual and it's killing us",
+  "I need a better system for tracking clients"
 
 INDIRECT:
-Pain existed but was ALREADY SOLVED, or the author is describing someone else's experience.
-The problem is historical, not current.
-  Examples: "here's how I automated my billing", "we used to struggle with X until we found Y",
-  "a client of mine had this issue...", "case study breakdown"
+The author personally experienced a workflow pain and built or found a solution —
+OR describes a problem in past tense. The pain was real but is now addressed.
+  These are still VALUABLE: the author validated a real market problem, may have
+  an incomplete solution, and is likely open to discussing better tooling.
+  Examples: "I built X because our invoicing was a nightmare",
+  "we used to spend hours on spreadsheets until we found Y",
+  "I automated our follow-up process because we kept losing leads"
 
 NON_LEAD:
-No actionable outreach opportunity. Includes:
-  - Selling or promoting a service/product
-  - Flexing achievements ("scaled to $1M", "I helped 50 clients")
-  - General advice or commentary with no personal ongoing pain
-  - Extreme crisis outside automation scope (bankruptcy, closing business)
-  - Vague frustration with no specific workflow or business context
+No actionable outreach opportunity. Use this ONLY for:
+  - Selling a product/service to others (they are the vendor, not the buyer)
+  - Flexing achievements with no workflow problem mentioned
+  - Pure general advice/commentary with zero personal operational pain
   - Hiring posts or job seeking
-  Examples: "I saved a client 10 hours/week", "book a call with me",
-  "here's my framework for success", "my HVAC business is thriving"
+  - Personal/lifestyle content unrelated to business operations
+  Examples: "I saved a client 10 hours/week" (selling),
+  "here's my framework for success" (advice, no pain),
+  "book a call with me" (promo)
 
 CRITICAL DISTINCTIONS:
-- Past tense problem ("used to struggle") = INDIRECT, NOT direct
-- Selling or helping others = NON_LEAD, not a buyer
-- Active, current, personal pain = DIRECT
-- When uncertain between DIRECT and INDIRECT → choose INDIRECT
+- "I built X because [pain]" = INDIRECT (they had real pain; built their own fix)
+- "I built X for my clients" or "I help businesses with X" = NON_LEAD (seller)
+- Active, unresolved, personal pain = DIRECT
+- Past pain that author resolved themselves = INDIRECT
+- Pure promotion / selling to others = NON_LEAD
+- When uncertain between DIRECT and INDIRECT → choose DIRECT if current pain language exists
 
 === STEP 2 — PAIN EVALUATION ===
 
-Only relevant for DIRECT leads. Evaluate:
+For DIRECT and INDIRECT leads, evaluate:
 
-BUSINESS RELEVANCE: Is this a real business workflow problem?
-PAIN SEVERITY: low = rare annoyance | medium = recurring inconvenience | high = ongoing bottleneck
-AUTOMATION FIT: Can workflow automation / integrations / tooling realistically help?
-ACTIONABILITY: Is there a real SMB decision-maker with a solvable problem?
+BUSINESS RELEVANCE: Is this a real business workflow problem (not a personal hobby)?
+PAIN SEVERITY: low = rare annoyance | medium = recurring weekly burden | high = ongoing bottleneck costing time/money
+AUTOMATION FIT: Can workflow automation / integrations / tooling realistically solve this?
+ACTIONABILITY: Is there a real SMB operator or decision-maker with a concrete, solvable problem?
+
+Strong pain indicators (boost score when present):
+  manual, repetitive, time-consuming, spreadsheet, follow-up, clients, admin,
+  workflow, inefficiency, every week, takes hours, falling through cracks,
+  no system, cobbled together, keeping track, losing leads
 
 === STEP 3 — SCORING (1–10) ===
 
-1–3  Not business-relevant, personal, or no automation angle.
-4–5  Weak: vague or low-confidence business context.
-6    Moderate: real business pain, specific, borderline.
-7–8  Strong: clear SMB workflow pain, specific recurring process, actionable.
-9–10 Excellent: concrete ongoing pain, likely decision-maker, specific costs or urgency.
+DIRECT leads:
+  1–3  Not business-relevant, personal, or no automation angle.
+  4–5  Weak: vague or low-confidence business context.
+  6    Moderate: real business pain, specific, borderline actionable.
+  7–8  Strong: clear SMB workflow pain, recurring process problem, good fit.
+  9–10 Excellent: concrete ongoing pain, decision-maker, specific costs or urgency.
 
-For INDIRECT or NON_LEAD → score 1–4 only.
+INDIRECT leads:
+  1–3  Pain was minor or the solution completely addresses it.
+  4–5  Real pain was present; solution exists but may be incomplete or scalable.
+  6–7  Strong indirect: significant operational pain, built own workaround, likely open to better tooling.
+
+NON_LEAD → score 1–3 only.
 
 === STEP 4 — BUYER INTENT SCORE (1–10) ===
 
-How likely is this person to want and accept a workflow automation solution?
+How likely is this person to want and accept a workflow automation solution RIGHT NOW?
 
-8–10 HIGH: Actively struggling, frustrated, asking for help or alternatives right now.
-5–7  MEDIUM: Problem exists, exploring options, unclear urgency.
-1–4  LOW: Problem already solved, seller, not a decision-maker, or not actionable.
+8–10 HIGH: Actively struggling, frustrated, explicitly asking for alternatives.
+5–7  MEDIUM: Problem exists or existed, exploring options, open to conversation.
+1–4  LOW: Fully solved, seller, not a decision-maker, or topic irrelevant.
 
 === RULES ===
 - Do NOT invent company details not stated in the post.
 - Infer industry only from concrete evidence; use "general business" if unclear.
-- A developer BUILDING tools = NON_LEAD.
-- Comments provide context but cannot rescue a clearly weak post.
+- A developer selling tools to others = NON_LEAD. A founder who built a tool for their OWN problem = INDIRECT.
+- Comments provide useful context — factor them in.
 
 === OUTPUT ===
 
@@ -325,15 +379,27 @@ def _derive_outreach_priority(
     """
     Compute outreach_priority from validated values.
     Enforced in code so it is always consistent with lead_type and scores.
+
+    Direct leads:   high/medium/low based on score+intent
+    Indirect leads: medium/low only (they had real pain; worth a gentle reach-out)
+    Non_lead:       none always
     """
-    if lead_type != "direct":
+    if lead_type == "non_lead":
         return "none"
-    if score >= 8 and intent >= 7:
-        return "high"
-    if score >= 6 and intent >= 5:
-        return "medium"
-    if score >= 4:
-        return "low"
+    if lead_type == "direct":
+        if score >= 8 and intent >= 7:
+            return "high"
+        if score >= 6 and intent >= 5:
+            return "medium"
+        if score >= 4:
+            return "low"
+        return "none"
+    if lead_type == "indirect":
+        if score >= 6 and intent >= 5:
+            return "medium"
+        if score >= 4:
+            return "low"
+        return "none"
     return "none"
 
 
@@ -361,11 +427,12 @@ def _validate_output(raw: dict, signal: dict) -> dict:
     except (TypeError, ValueError):
         intent = 3.0
 
-    # Enforce: indirect/non_lead should not have high scores
+    # Enforce score ceilings per lead type
     if lead_type == "non_lead" and score > 4:
         score = min(score, 4.0)
-    if lead_type == "indirect" and score > 6:
-        score = min(score, 6.0)
+    if lead_type == "indirect" and score > 7:
+        # Indirect leads can score up to 7 — they had real pain even if solved
+        score = min(score, 7.0)
 
     pain_type  = _coerce_pain_type(raw.get("pain_type"))
     should_keep = score >= SCORE_THRESHOLD and lead_type != "non_lead"
@@ -376,10 +443,16 @@ def _validate_output(raw: dict, signal: dict) -> dict:
 
     # Derived / enforced fields
     outreach_priority = _derive_outreach_priority(lead_type, score, intent)
+    # Direct leads: full threshold required.
+    # Indirect leads: slightly relaxed — they validated real pain; score>=6 + intent>=5.
     is_outreach_ready = (
         lead_type == "direct"
         and score  >= SCORE_THRESHOLD
         and intent >= INTENT_THRESHOLD
+    ) or (
+        lead_type == "indirect"
+        and score  >= SCORE_THRESHOLD
+        and intent >= 5
     )
 
     def _s(key: str, max_len: int = 500) -> Optional[str]:
