@@ -28,14 +28,16 @@ Config (env vars):
   IH_ENABLED                  (default: true)
   IH_ALGOLIA_APP_ID           (default: N86T1R3OWZ)
   IH_ALGOLIA_API_KEY          (default: 5140dac5e87f47346abbda1a34ee70c3)
-  IH_HITS_PER_QUERY           (default: 15)
-  IH_MAX_QUERIES_PER_RUN      (default: 10)
+  IH_HITS_PER_QUERY           (default: 25)
+  IH_MAX_QUERIES_PER_RUN      (default: 12)
   IH_QUERY_DELAY_SECONDS      (default: 1.0)
-  IH_MIN_HEURISTIC_SCORE      (default: 2)   — 0–11 scale; 2 = needs ≥1 pain signal
-  IH_MIN_SOURCE_SCORE         (default: 2.0) — 0–10 weighted priority score
-  IH_MAX_CANDIDATES           (default: 25)  — hard cap on output per run
-  IH_MIN_CANDIDATES_TARGET    (default: 8)
+  IH_MIN_HEURISTIC_SCORE      (default: 0)   — let AI filter; only -99 hard-blocks
+  IH_MIN_SOURCE_SCORE         (default: 1.0) — freshness-weighted gate; 0 to disable
+  IH_MAX_CANDIDATES           (default: 60)  — hard cap on output per run
+  IH_MIN_CANDIDATES_TARGET    (default: 15)
   IH_FRESHNESS_WINDOW_DAYS    (default: matches PAIN_SIGNAL_HARD_MAX_DAYS=30)
+  IH_FALLBACK_WINDOW_DAYS     (default: 60)  — used if first pass yields < IH_FALLBACK_THRESHOLD
+  IH_FALLBACK_THRESHOLD       (default: 10)  — min candidates before fallback kicks in
 """
 import asyncio
 import logging
@@ -62,17 +64,21 @@ IH_ENABLED      = os.getenv("IH_ENABLED", "true").lower() in ("1", "true", "yes"
 _ALGOLIA_APP_ID = os.getenv("IH_ALGOLIA_APP_ID",  "N86T1R3OWZ")
 _ALGOLIA_KEY    = os.getenv("IH_ALGOLIA_API_KEY",  "5140dac5e87f47346abbda1a34ee70c3")
 
-_HITS_PER_QUERY    = int(os.getenv("IH_HITS_PER_QUERY",          "15"))
-_MAX_QUERIES       = int(os.getenv("IH_MAX_QUERIES_PER_RUN",     "10"))
+_HITS_PER_QUERY    = int(os.getenv("IH_HITS_PER_QUERY",          "25"))
+_MAX_QUERIES       = int(os.getenv("IH_MAX_QUERIES_PER_RUN",     "12"))
 _QUERY_DELAY       = float(os.getenv("IH_QUERY_DELAY_SECONDS",   "1.0"))
-_MIN_HEURISTIC     = int(os.getenv("IH_MIN_HEURISTIC_SCORE",     "2"))
-_MIN_SOURCE_SCORE  = float(os.getenv("IH_MIN_SOURCE_SCORE",      "2.0"))
-_MAX_CANDIDATES    = int(os.getenv("IH_MAX_CANDIDATES",          "25"))
-_TARGET_CANDS      = int(os.getenv("IH_MIN_CANDIDATES_TARGET",   "8"))
+_MIN_HEURISTIC     = int(os.getenv("IH_MIN_HEURISTIC_SCORE",     "0"))
+_MIN_SOURCE_SCORE  = float(os.getenv("IH_MIN_SOURCE_SCORE",      "1.0"))
+_MAX_CANDIDATES    = int(os.getenv("IH_MAX_CANDIDATES",          "60"))
+_TARGET_CANDS      = int(os.getenv("IH_MIN_CANDIDATES_TARGET",   "15"))
 
 # Source-level freshness window in days.  Defaults to the global hard max so
 # we never fetch posts that the global selector would immediately discard.
-_FRESHNESS_DAYS = int(os.getenv("IH_FRESHNESS_WINDOW_DAYS", str(HARD_MAX_DAYS)))
+_FRESHNESS_DAYS    = int(os.getenv("IH_FRESHNESS_WINDOW_DAYS",  str(HARD_MAX_DAYS)))
+# Fallback: if first pass yields fewer than _FALLBACK_THRESHOLD candidates,
+# re-run 3 broad queries with this wider window to top up the pool.
+_FALLBACK_DAYS     = int(os.getenv("IH_FALLBACK_WINDOW_DAYS",   "60"))
+_FALLBACK_THRESHOLD= int(os.getenv("IH_FALLBACK_THRESHOLD",     "10"))
 
 IH_BASE       = "https://www.indiehackers.com"
 _ALGOLIA_BASE = f"https://{_ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/discussions"
@@ -85,28 +91,45 @@ _ALGOLIA_HEADERS = {
 
 # ---------------------------------------------------------------------------
 # SEARCH QUERIES
-# Tight, operational-pain focused.  Avoids broad/evergreen phrasing that
-# surfaces old tutorials, launch announcements, or developer lifestyle posts.
-# Ordered best-first; capped at _MAX_QUERIES per run.
+# Short keyword queries (1–3 words) cast a wide net within the freshness
+# window.  Long natural-language sentences are bad for Algolia full-text
+# because they require all words to co-occur.
+#
+# TYPE A — broad volume drivers (single keywords)
+# TYPE B — pain-leaning (2–3 words)
+#
+# Ordered: pain-leaning first so the best signals lead early; broad ones
+# fill volume.  Capped at _MAX_QUERIES per run.
 # ---------------------------------------------------------------------------
 
 SEARCH_QUERIES: list[str] = [
-    "manual invoicing taking too long",
-    "client follow up slipping through cracks",
-    "onboarding process is broken",
-    "admin taking over my time",
-    "managing clients is a mess",
-    "spreadsheet workflow breaking down",
-    "CRM not working for small business",
-    "scheduling problems with clients",
-    "overwhelmed by admin tasks",
-    "missing leads no system",
-    "follow up system not working",
-    "repetitive operations every week",
-    "still doing this manually",
-    "no tool for this problem",
-    "wasting hours every week on",
+    # TYPE B — pain-leaning (2–3 words)
+    "manual work",
+    "too much admin",
+    "repetitive tasks",
+    "client management",
+    "manual invoicing",
+    "follow up",
+    "data entry",
+    "spreadsheet problems",
+    "wasting time",
+    "overwhelmed admin",
+    # TYPE A — broad volume drivers
+    "onboarding",
+    "spreadsheet",
+    "automation",
+    "workflow",
+    "admin",
+    "CRM",
+    "scheduling",
+    "invoicing",
+    "clients",
+    "process",
 ]
+
+# Broad queries used only in the fallback (wider window) pass.
+# Kept short to maximise hit count when the primary window is too dry.
+_FALLBACK_QUERIES: list[str] = ["workflow", "admin", "clients", "process"]
 
 # ---------------------------------------------------------------------------
 # HEURISTIC FILTERS
@@ -291,24 +314,34 @@ class IHDiagnostics:
     queries_attempted:      int = 0
     queries_ok:             int = 0
     queries_failed:         int = 0
+    queries_with_hits:      int = 0   # queries that returned ≥1 hit
+    queries_with_zero_hits: int = 0   # queries that returned 0 hits
+    fallback_triggered:     bool = False
     raw_hits:               int = 0
     deduped_out:            int = 0
-    stale_rejected:         int = 0   # has timestamp, older than _FRESHNESS_DAYS
-    missing_ts_rejected:    int = 0   # no/unparseable timestamp → discarded
-    heuristic_rejected:     int = 0   # score == -99 or < _MIN_HEURISTIC
-    weak_score_rejected:    int = 0   # below _MIN_SOURCE_SCORE
-    over_cap_rejected:      int = 0   # trimmed to _MAX_CANDIDATES
-    fresh_kept:             int = 0   # passed freshness check
+    stale_rejected:         int = 0
+    missing_ts_rejected:    int = 0
+    heuristic_rejected:     int = 0
+    weak_score_rejected:    int = 0
+    over_cap_rejected:      int = 0
+    fresh_kept:             int = 0
     final_candidates:       int = 0
     failed_queries:         list = field(default_factory=list)
-    query_contributions:    dict = field(default_factory=dict)  # query→count
+    query_contributions:    dict = field(default_factory=dict)  # query→kept_count
+
+    @property
+    def avg_hits_per_query(self) -> float:
+        return round(self.raw_hits / self.queries_ok, 1) if self.queries_ok else 0.0
 
     def log_summary(self) -> None:
         logger.info(
             "IH scraper done | "
-            "queries=%d/%d (%d failed) | "
+            "queries=%d/%d ok (%d zero-hit %d failed) | avg_hits/query=%.1f%s | "
             "raw=%d → deduped=-%d stale=-%d no_ts=-%d heuristic=-%d weak=-%d cap=-%d → final=%d",
-            self.queries_ok, self.queries_attempted, self.queries_failed,
+            self.queries_ok, self.queries_attempted,
+            self.queries_with_zero_hits, self.queries_failed,
+            self.avg_hits_per_query,
+            " [FALLBACK used]" if self.fallback_triggered else "",
             self.raw_hits,
             self.deduped_out,
             self.stale_rejected,
@@ -329,30 +362,32 @@ class IHDiagnostics:
 # ALGOLIA FETCH
 # ---------------------------------------------------------------------------
 
-def _since_ms() -> int:
-    """Unix timestamp in milliseconds for _FRESHNESS_DAYS ago."""
+def _since_ms(days: int) -> int:
+    """Unix timestamp in milliseconds for `days` ago."""
     return int(
-        (datetime.now(timezone.utc) - timedelta(days=_FRESHNESS_DAYS)).timestamp() * 1000
+        (datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000
     )
 
 
 async def _algolia_search(
-    client: httpx.AsyncClient,
-    query:  str,
-    diag:   IHDiagnostics,
+    client:     httpx.AsyncClient,
+    query:      str,
+    diag:       IHDiagnostics,
+    window_days: int | None = None,
 ) -> list[dict]:
     """
-    Run one Algolia query with source-level freshness filter baked in.
+    Run one Algolia query against the discussions index.
 
-    numericFilters=createdTimestamp>{since_ms} tells Algolia to only return
-    posts created within _FRESHNESS_DAYS.  This prevents stale evergreen
+    window_days overrides _FRESHNESS_DAYS for this call (used by fallback pass).
+    numericFilters=createdTimestamp>{since_ms} prevents stale evergreen
     results from entering the pipeline at all.
     """
+    effective_window = window_days if window_days is not None else _FRESHNESS_DAYS
     params = urlencode({
         "query":          query,
         "hitsPerPage":    _HITS_PER_QUERY,
         "filters":        "partNumber=1",
-        "numericFilters": f"createdTimestamp>{_since_ms()}",
+        "numericFilters": f"createdTimestamp>{_since_ms(effective_window)}",
     })
     url = f"{_ALGOLIA_BASE}?{params}"
     diag.queries_attempted += 1
@@ -368,11 +403,17 @@ async def _algolia_search(
         data  = resp.json()
         hits  = data.get("hits", [])
         nb    = data.get("nbHits", "?")
-        diag.queries_ok  += 1
-        diag.raw_hits    += len(hits)
+        diag.queries_ok += 1
+        diag.raw_hits   += len(hits)
+
+        if hits:
+            diag.queries_with_hits += 1
+        else:
+            diag.queries_with_zero_hits += 1
+
         logger.info(
             "IH Algolia | query=%r → %d hits (nbHits=%s, window=%dd)",
-            query, len(hits), nb, _FRESHNESS_DAYS,
+            query, len(hits), nb, effective_window,
         )
         return hits
 
@@ -437,9 +478,9 @@ async def scrape_indiehackers() -> list[dict]:
         logger.info("IH scraper: disabled (IH_ENABLED=false)")
         return []
 
-    diag         = IHDiagnostics()
-    seen_urls:   set[str] = set()
-    pre_cap:     list[dict] = []   # accumulate before applying _MAX_CANDIDATES cap
+    diag      = IHDiagnostics()
+    seen_urls: set[str] = set()
+    pre_cap:   list[dict] = []
 
     queries = SEARCH_QUERIES[:_MAX_QUERIES]
     logger.info(
@@ -449,110 +490,103 @@ async def scrape_indiehackers() -> list[dict]:
         _MIN_HEURISTIC, _MIN_SOURCE_SCORE, _MAX_CANDIDATES,
     )
 
+    def _absorb_hit(hit: dict) -> bool:
+        """
+        Normalize one Algolia hit, apply all source-level gates, and if it
+        passes, append to pre_cap.  Returns True if the hit was kept.
+        Mutates diag and seen_urls as side-effects.
+        """
+        raw = _normalize_hit(hit)
+        if raw is None:
+            return False
+
+        norm_url = raw["source_url"].rstrip("/").lower()
+        if norm_url in seen_urls:
+            diag.deduped_out += 1
+            return False
+        seen_urls.add(norm_url)
+
+        # Freshness gate
+        fresh_score, fresh_label = _freshness_score(raw["source_created_at"])
+        if fresh_label == "no_timestamp":
+            diag.missing_ts_rejected += 1
+            return False
+        if fresh_label == "stale":
+            diag.stale_rejected += 1
+            return False
+        diag.fresh_kept += 1
+
+        # Heuristic gate
+        title   = raw["title"]
+        body    = raw["body"]
+        h_score = score_post_relevance(title, body)
+        if h_score == -99:
+            diag.heuristic_rejected += 1
+            return False
+        if h_score < _MIN_HEURISTIC:
+            diag.heuristic_rejected += 1
+            return False
+
+        # Source priority score gate
+        src_score = _source_priority_score(
+            h_score, fresh_score, raw["post_score"], raw["num_comments"],
+        )
+        if src_score < _MIN_SOURCE_SCORE:
+            diag.weak_score_rejected += 1
+            return False
+
+        content = f"{title}\n\n{body}".strip() if body else title
+        pre_cap.append({
+            "source":            "indiehackers",
+            "source_url":        raw["source_url"],
+            "author":            raw["author"],
+            "title":             title,
+            "body":              body,
+            "content":           content,
+            "keywords_matched":  _extract_keywords(title, body),
+            "post_score":        raw["post_score"],
+            "num_comments":      raw["num_comments"],
+            "source_created_at": normalize_source_timestamp(raw["source_created_at"]),
+            "scraped_at":        datetime.utcnow().isoformat(),
+            "heuristic_score":   h_score,
+            "_ih_source_score":  src_score,
+        })
+        return True
+
     async with httpx.AsyncClient(follow_redirects=True) as client:
+
+        # --- Primary pass: primary freshness window ---
         for query in queries:
             hits = await _algolia_search(client, query, diag)
-            kept_this_query = 0
-
-            for hit in hits:
-                raw = _normalize_hit(hit)
-                if raw is None:
-                    continue
-
-                norm_url = raw["source_url"].rstrip("/").lower()
-                if norm_url in seen_urls:
-                    diag.deduped_out += 1
-                    continue
-                seen_urls.add(norm_url)
-
-                # --- Source-level freshness gate ---
-                fresh_score, fresh_label = _freshness_score(raw["source_created_at"])
-
-                if fresh_label == "no_timestamp":
-                    # No timestamp → discard; can't verify freshness
-                    diag.missing_ts_rejected += 1
-                    logger.debug(
-                        "IH reject no_timestamp: %r", raw["title"][:60]
-                    )
-                    continue
-
-                if fresh_label == "stale":
-                    # Timestamp present but beyond window — should be rare
-                    # because Algolia filter catches most, but handle edge cases
-                    diag.stale_rejected += 1
-                    logger.debug(
-                        "IH reject stale: %r", raw["title"][:60]
-                    )
-                    continue
-
-                diag.fresh_kept += 1
-
-                # --- Heuristic relevance gate ---
-                title   = raw["title"]
-                body    = raw["body"]
-                h_score = score_post_relevance(title, body)
-
-                if h_score == -99:
-                    diag.heuristic_rejected += 1
-                    logger.debug("IH reject disqualified: %r", title[:60])
-                    continue
-
-                if h_score < _MIN_HEURISTIC:
-                    diag.heuristic_rejected += 1
-                    logger.debug(
-                        "IH reject low_heuristic (h=%d): %r", h_score, title[:60]
-                    )
-                    continue
-
-                # --- Source-level priority score gate ---
-                src_score = _source_priority_score(
-                    h_score, fresh_score,
-                    raw["post_score"], raw["num_comments"],
-                )
-                if src_score < _MIN_SOURCE_SCORE:
-                    diag.weak_score_rejected += 1
-                    logger.debug(
-                        "IH reject weak_score (%.2f): %r", src_score, title[:60]
-                    )
-                    continue
-
-                content = f"{title}\n\n{body}".strip() if body else title
-
-                pre_cap.append({
-                    "source":             "indiehackers",
-                    "source_url":         raw["source_url"],
-                    "author":             raw["author"],
-                    "title":              title,
-                    "body":               body,
-                    "content":            content,
-                    "keywords_matched":   _extract_keywords(title, body),
-                    "post_score":         raw["post_score"],
-                    "num_comments":       raw["num_comments"],
-                    "source_created_at":  normalize_source_timestamp(
-                        raw["source_created_at"]
-                    ),
-                    "scraped_at":         datetime.utcnow().isoformat(),
-                    "heuristic_score":    h_score,
-                    "_ih_source_score":   src_score,    # internal — not forwarded
-                    "_ih_fresh_label":    fresh_label,  # internal — not forwarded
-                })
-                kept_this_query += 1
-
-            diag.query_contributions[query] = kept_this_query
+            kept = sum(_absorb_hit(h) for h in hits)
+            diag.query_contributions[query] = kept
             await asyncio.sleep(_QUERY_DELAY)
 
-    # Sort by source priority score descending, then apply hard cap
-    pre_cap.sort(key=lambda x: x.get("_ih_source_score", 0), reverse=True)
+        # --- Fallback pass: wider window if primary pass underdelivered ---
+        if len(pre_cap) < _FALLBACK_THRESHOLD and _FALLBACK_DAYS > _FRESHNESS_DAYS:
+            diag.fallback_triggered = True
+            logger.info(
+                "IH fallback: only %d candidates after %dd window — "
+                "re-querying %d broad queries with %dd window",
+                len(pre_cap), _FRESHNESS_DAYS,
+                len(_FALLBACK_QUERIES), _FALLBACK_DAYS,
+            )
+            for query in _FALLBACK_QUERIES:
+                hits = await _algolia_search(client, query, diag, window_days=_FALLBACK_DAYS)
+                kept = sum(_absorb_hit(h) for h in hits)
+                diag.query_contributions[f"{query}[fallback]"] = kept
+                await asyncio.sleep(_QUERY_DELAY)
 
+    # Sort best-first, apply hard cap
+    pre_cap.sort(key=lambda x: x.get("_ih_source_score", 0), reverse=True)
     if len(pre_cap) > _MAX_CANDIDATES:
         diag.over_cap_rejected = len(pre_cap) - _MAX_CANDIDATES
         pre_cap = pre_cap[:_MAX_CANDIDATES]
 
-    # Strip internal scoring fields before handing to pipeline
+    # Strip internal field before handing off
     all_signals = []
     for s in pre_cap:
         s.pop("_ih_source_score", None)
-        s.pop("_ih_fresh_label",  None)
         all_signals.append(s)
 
     diag.final_candidates = len(all_signals)
