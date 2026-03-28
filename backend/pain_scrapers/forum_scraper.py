@@ -1,10 +1,13 @@
-"""Forum and community pain signal scraper (Indie Hackers, HackerNews, etc.)."""
+"""Forum and community pain signal scraper (HackerNews).
+
+Indie Hackers is now a standalone source in indiehackers_scraper.py and is
+run directly from the orchestrator.  scrape_forums() covers HN only.
+"""
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
 import httpx
-from bs4 import BeautifulSoup
 
 from pain_scrapers.signal_ranker import HARD_MAX_DAYS, normalize_source_timestamp
 
@@ -39,9 +42,6 @@ _HN_BASE = (
     "&hitsPerPage=25"
     "&numericFilters=created_at_i%3E{since_ts}"   # created_at_i > since_ts
 )
-IH_SEARCH = "https://www.indiehackers.com/search?query={query}"
-
-
 def _hn_url(query: str) -> str:
     """Build a date-filtered HN Algolia search URL."""
     since_ts = int(
@@ -103,55 +103,10 @@ async def scrape_hacker_news(client: httpx.AsyncClient) -> list[dict]:
     return signals
 
 
-async def scrape_indie_hackers(client: httpx.AsyncClient) -> list[dict]:
-    """Scrape Indie Hackers for pain signals (no reliable timestamp available)."""
-    signals = []
-    queries = ["manual process taking too long", "need to automate", "repetitive tasks"]
-
-    for query in queries:
-        try:
-            resp = await client.get(
-                IH_SEARCH.format(query=query.replace(" ", "+")),
-                headers=HEADERS, timeout=15,
-            )
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for post in soup.select(".post-preview"):
-                text    = post.get_text(strip=True).lower()
-                matched = [kw for kw in PAIN_KEYWORDS if kw in text]
-                if not matched:
-                    continue
-                link_el  = post.select_one("a")
-                href     = link_el.get("href", "") if link_el else ""
-                body_txt = post.get_text(strip=True)[:500]
-                signals.append({
-                    "source":           "indiehackers",
-                    "source_url":       f"https://www.indiehackers.com{href}",
-                    "author":           "anonymous",
-                    "title":            "",
-                    "body":             body_txt,
-                    "content":          body_txt,
-                    "keywords_matched": matched,
-                    "post_score":       0,
-                    "num_comments":     0,
-                    "source_created_at":None,   # IH HTML has no reliable timestamp
-                    "scraped_at":       datetime.utcnow().isoformat(),
-                })
-        except Exception as exc:
-            logger.error("Error scraping IH for '%s': %s", query, exc)
-
-        await asyncio.sleep(1)
-
-    return signals
-
-
 async def scrape_forums() -> list[dict]:
-    """Main entry point for forum scraping."""
-    all_signals = []
+    """HackerNews forum scraping.  Indie Hackers is handled by indiehackers_scraper.py."""
     async with httpx.AsyncClient(follow_redirects=True) as client:
         hn = await scrape_hacker_news(client)
-        ih = await scrape_indie_hackers(client)
-        all_signals.extend(hn)
-        all_signals.extend(ih)
 
-    logger.info("Forum scraper: %d signals (HN=%d, IH=%d)", len(all_signals), len(hn), len(ih))
-    return all_signals
+    logger.info("Forum scraper: %d HN signals", len(hn))
+    return hn
