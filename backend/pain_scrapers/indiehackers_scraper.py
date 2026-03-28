@@ -29,15 +29,15 @@ Config (env vars):
   IH_ALGOLIA_APP_ID           (default: N86T1R3OWZ)
   IH_ALGOLIA_API_KEY          (default: 5140dac5e87f47346abbda1a34ee70c3)
   IH_HITS_PER_QUERY           (default: 25)
-  IH_MAX_QUERIES_PER_RUN      (default: 12)
+  IH_MAX_QUERIES_PER_RUN      (default: 15)
   IH_QUERY_DELAY_SECONDS      (default: 1.0)
-  IH_MIN_HEURISTIC_SCORE      (default: 0)   — let AI filter; only -99 hard-blocks
-  IH_MIN_SOURCE_SCORE         (default: 1.0) — freshness-weighted gate; 0 to disable
+  IH_MIN_HEURISTIC_SCORE      (default: 0)   — only -99 hard-blocks; AI filters rest
+  IH_MIN_SOURCE_SCORE         (default: 0.5) — very permissive; blocks only no-freshness hits
   IH_MAX_CANDIDATES           (default: 60)  — hard cap on output per run
-  IH_MIN_CANDIDATES_TARGET    (default: 15)
+  IH_MIN_CANDIDATES_TARGET    (default: 30)
   IH_FRESHNESS_WINDOW_DAYS    (default: matches PAIN_SIGNAL_HARD_MAX_DAYS=30)
-  IH_FALLBACK_WINDOW_DAYS     (default: 60)  — used if first pass yields < IH_FALLBACK_THRESHOLD
-  IH_FALLBACK_THRESHOLD       (default: 10)  — min candidates before fallback kicks in
+  IH_FALLBACK_WINDOW_DAYS     (default: 90)  — used if first pass yields < IH_FALLBACK_THRESHOLD
+  IH_FALLBACK_THRESHOLD       (default: 25)  — trigger fallback if below this count
 """
 import asyncio
 import logging
@@ -65,20 +65,20 @@ _ALGOLIA_APP_ID = os.getenv("IH_ALGOLIA_APP_ID",  "N86T1R3OWZ")
 _ALGOLIA_KEY    = os.getenv("IH_ALGOLIA_API_KEY",  "5140dac5e87f47346abbda1a34ee70c3")
 
 _HITS_PER_QUERY    = int(os.getenv("IH_HITS_PER_QUERY",          "25"))
-_MAX_QUERIES       = int(os.getenv("IH_MAX_QUERIES_PER_RUN",     "12"))
+_MAX_QUERIES       = int(os.getenv("IH_MAX_QUERIES_PER_RUN",     "15"))
 _QUERY_DELAY       = float(os.getenv("IH_QUERY_DELAY_SECONDS",   "1.0"))
 _MIN_HEURISTIC     = int(os.getenv("IH_MIN_HEURISTIC_SCORE",     "0"))
-_MIN_SOURCE_SCORE  = float(os.getenv("IH_MIN_SOURCE_SCORE",      "1.0"))
+_MIN_SOURCE_SCORE  = float(os.getenv("IH_MIN_SOURCE_SCORE",      "0.5"))
 _MAX_CANDIDATES    = int(os.getenv("IH_MAX_CANDIDATES",          "60"))
-_TARGET_CANDS      = int(os.getenv("IH_MIN_CANDIDATES_TARGET",   "15"))
+_TARGET_CANDS      = int(os.getenv("IH_MIN_CANDIDATES_TARGET",   "30"))
 
 # Source-level freshness window in days.  Defaults to the global hard max so
 # we never fetch posts that the global selector would immediately discard.
 _FRESHNESS_DAYS    = int(os.getenv("IH_FRESHNESS_WINDOW_DAYS",  str(HARD_MAX_DAYS)))
 # Fallback: if first pass yields fewer than _FALLBACK_THRESHOLD candidates,
-# re-run 3 broad queries with this wider window to top up the pool.
-_FALLBACK_DAYS     = int(os.getenv("IH_FALLBACK_WINDOW_DAYS",   "60"))
-_FALLBACK_THRESHOLD= int(os.getenv("IH_FALLBACK_THRESHOLD",     "10"))
+# re-run broad queries with this wider window to top up the pool.
+_FALLBACK_DAYS     = int(os.getenv("IH_FALLBACK_WINDOW_DAYS",   "90"))
+_FALLBACK_THRESHOLD= int(os.getenv("IH_FALLBACK_THRESHOLD",     "25"))
 
 IH_BASE       = "https://www.indiehackers.com"
 _ALGOLIA_BASE = f"https://{_ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/discussions"
@@ -135,33 +135,18 @@ _FALLBACK_QUERIES: list[str] = ["workflow", "admin", "clients", "process"]
 # HEURISTIC FILTERS
 # ---------------------------------------------------------------------------
 
-# Hard disqualifiers — any match → score -99 → immediate reject
+# Hard disqualifiers — any match in title+body → score -99 → immediate reject.
+# Keep this list SHORT and HIGH-CONFIDENCE only.  False positives here kill
+# volume — the AI analyzer handles nuanced filtering downstream.
 DISQUALIFY_FRAGMENTS: list[str] = [
-    # Revenue milestones / brag posts
-    "just hit $", "just crossed $", "we hit $", "reached $",
-    "passed $1k mrr", "crossed $5k mrr", "hit $10k mrr",
-    "first dollar", "first customer", "first sale",
-    # Progress updates / recaps
-    "milestone:", "month 1:", "month 2:", "month 3:", "month 4:",
-    "year in review", "annual review", "year 1 recap", "q1 recap",
-    # Origin / story posts
-    "the story of", "the story behind", "how i started", "started as a side",
-    "here's my journey", "my journey to", "lessons learned from",
-    "from idea to", "how we got to",
-    # Launch announcements
-    "we just launched", "just launched", "today we launched",
-    "product hunt", "launching today", "show ih:", "show hn:",
-    "i just shipped", "we just shipped", "just released", "v2 is live",
-    # Self-promotion / sales
-    "i built", "i made", "i created", "check out my",
-    "book a demo", "free trial", "sign up now",
-    "we help companies", "i help businesses", "we help founders",
-    # Hiring
+    # Pure revenue brag in title context (not general discussion)
+    "just hit $", "just crossed $", "passed $1k mrr", "crossed $5k mrr",
+    # Explicit job posts
     "we're hiring", "now hiring", "join our team",
-    # Lifestyle / generic dev
-    "how many hours do you", "how long do you work",
+    # Hard sales / CTA
+    "book a demo", "sign up now", "free trial",
+    # Lifestyle noise unrelated to workflow pain
     "morning routine", "daily routine", "work-life balance",
-    "remote work tips", "productivity tips", "focus tips",
 ]
 
 # Positive current-pain phrases — each match earns a bonus
@@ -436,7 +421,7 @@ def _normalize_hit(hit: dict) -> dict | None:
 
     if not title or not item_id:
         return None
-    if len(title) < 15:   # filter noise titles that are too short to be meaningful
+    if len(title) < 8:
         return None
 
     # Author
