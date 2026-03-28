@@ -2,41 +2,36 @@
 Indie Hackers pain-signal scraper — standalone source adapter.
 
 Discovery strategy:
-  Fetches IH search-result pages for a compact set of high-signal
-  pain queries, then falls back to the forum listing page if searches
-  yield few candidates.
+  Fetches IH forum-category listing pages.  IH is a Next.js app whose forum
+  pages server-side render post data inside a <script id="__NEXT_DATA__"> tag.
+  We extract that JSON first; CSS-selector and link-pattern passes are kept as
+  fallbacks in case the JSON shape changes.
 
-  IH is a React SPA, but its search and forum pages server-side render
-  enough HTML for SEO that we can extract post titles and URLs reliably.
-  The main risk is CSS-class changes; multiple selector fallbacks + a
-  link-pattern fallback keep this resilient.
+  NOTE: IH *search* pages (/search?query=...) use client-side Algolia and
+  return an empty SSR shell — they will never yield candidates and have been
+  removed from TARGET_PAGES.
 
 Output:
   List of candidate dicts compatible with signal_ranker + pain_signal_analyzer.
   source = "indiehackers"
 
-Fragility note:
-  If IH changes their HTML structure, the TITLE_SELECTORS / BODY_SELECTORS
-  lists below are the first thing to update.  The link-pattern fallback
-  (any <a href="/post/..."> or <a href="/group/.../post/..."> element) is
-  the last-resort and rarely breaks because URL patterns stay stable.
-
 Config (env vars):
   IH_ENABLED                   (default: true)
-  IH_MAX_PAGES_PER_RUN         (default: 6)
+  IH_MAX_PAGES_PER_RUN         (default: 7)
   IH_CONCURRENCY               (default: 2)
   IH_TIMEOUT_SECONDS           (default: 15)
   IH_MIN_CANDIDATES_TARGET     (default: 10)
-  IH_MIN_HEURISTIC_SCORE       (default: 2)
+  IH_MIN_HEURISTIC_SCORE       (default: 0)   ← relaxed; negative = spam filter only
   IH_REQUEST_DELAY_SECONDS     (default: 1.5)
 """
 import asyncio
+import json
 import logging
 import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -49,30 +44,29 @@ logger = logging.getLogger(__name__)
 # CONFIG
 # ---------------------------------------------------------------------------
 
-IH_ENABLED        = os.getenv("IH_ENABLED",     "true").lower() in ("1", "true", "yes")
-_CONCURRENCY      = int(os.getenv("IH_CONCURRENCY",               "2"))
-_TIMEOUT          = float(os.getenv("IH_TIMEOUT_SECONDS",         "15"))
-_MAX_PAGES        = int(os.getenv("IH_MAX_PAGES_PER_RUN",         "6"))
-_TARGET_CANDS     = int(os.getenv("IH_MIN_CANDIDATES_TARGET",     "10"))
-_MIN_HEURISTIC    = int(os.getenv("IH_MIN_HEURISTIC_SCORE",       "2"))
-_REQUEST_DELAY    = float(os.getenv("IH_REQUEST_DELAY_SECONDS",   "1.5"))
+IH_ENABLED     = os.getenv("IH_ENABLED",     "true").lower() in ("1", "true", "yes")
+_CONCURRENCY   = int(os.getenv("IH_CONCURRENCY",               "2"))
+_TIMEOUT       = float(os.getenv("IH_TIMEOUT_SECONDS",         "15"))
+_MAX_PAGES     = int(os.getenv("IH_MAX_PAGES_PER_RUN",         "7"))
+_TARGET_CANDS  = int(os.getenv("IH_MIN_CANDIDATES_TARGET",     "10"))
+_MIN_HEURISTIC = int(os.getenv("IH_MIN_HEURISTIC_SCORE",       "0"))   # 0 = spam-filter only
+_REQUEST_DELAY = float(os.getenv("IH_REQUEST_DELAY_SECONDS",   "1.5"))
 
 IH_BASE = "https://www.indiehackers.com"
 
-# Each entry is (url, label).  Labels appear in diagnostics.
-# Search pages give the most targeted content — forum listing is fallback.
+# Forum listing pages — these have SSR content in __NEXT_DATA__.
+# Search pages (/search?query=...) intentionally excluded (client-side Algolia).
 TARGET_PAGES: list[tuple[str, str]] = [
-    (f"{IH_BASE}/search?query=manual+process+taking+too+long",  "search:manual_process"),
-    (f"{IH_BASE}/search?query=need+to+automate+workflow",       "search:automate_workflow"),
-    (f"{IH_BASE}/search?query=spreadsheet+process+problem",     "search:spreadsheet"),
-    (f"{IH_BASE}/search?query=repetitive+tasks+business",       "search:repetitive_tasks"),
-    (f"{IH_BASE}/search?query=wasting+time+on+admin",           "search:admin_waste"),
-    (f"{IH_BASE}/search?query=hard+to+manage+clients",          "search:client_mgmt"),
-    (f"{IH_BASE}/forum",                                        "forum:main"),
+    (f"{IH_BASE}/forum",                    "forum:main"),
+    (f"{IH_BASE}/forum/growing-a-business", "forum:growing"),
+    (f"{IH_BASE}/forum/help-and-advice",    "forum:help"),
+    (f"{IH_BASE}/forum/ask-ih",             "forum:ask"),
+    (f"{IH_BASE}/forum/automation",         "forum:automation"),
+    (f"{IH_BASE}/forum/general",            "forum:general"),
+    (f"{IH_BASE}/forum/share-your-ideas",   "forum:ideas"),
 ]
 
-# CSS selectors tried in order to extract post titles.
-# First selector that yields ≥1 result wins for that page.
+# CSS selectors tried in order when __NEXT_DATA__ yields nothing.
 TITLE_SELECTORS: list[str] = [
     "h2 a", "h3 a", "h4 a",
     ".post-title a", ".feed-item__title a",
@@ -81,7 +75,6 @@ TITLE_SELECTORS: list[str] = [
     ".story-title a", "[class*='title'] a",
 ]
 
-# CSS selectors for body/snippet text adjacent to the post link.
 BODY_SELECTORS: list[str] = [
     ".post-body", ".feed-item__description",
     "article p", ".excerpt", ".preview",
@@ -89,7 +82,7 @@ BODY_SELECTORS: list[str] = [
     "[class*='description']", "[class*='excerpt']",
 ]
 
-# Regex pattern for IH post / forum / group post URLs (path only)
+# Valid IH post/forum/group URL path patterns
 _IH_POST_PATH_RE = re.compile(
     r"^(/post/|/forum/[^#?]+|/group/[^/]+/post/)",
     re.IGNORECASE,
@@ -110,20 +103,15 @@ HEADERS = {
 # ---------------------------------------------------------------------------
 
 DISQUALIFY_FRAGMENTS: list[str] = [
-    # Pure growth bragging / MRR milestones without pain context
     "just hit $", "just crossed $", "we hit $", "reached $",
     "milestone:", "month 1:", "month 2:", "month 3:",
-    # Launch announcements
     "we just launched", "just launched", "today we launched",
     "product hunt", "launching today", "announcing",
-    # Self-promotional
     "i built", "i made", "i created", "check out my",
     "i help businesses", "i help founders", "we help companies",
     "book a demo", "free trial", "sign up",
-    # Generic motivation / philosophy noise
     "hustle hard", "the grind", "failure is a lesson",
     "mindset shift", "lessons learned from",
-    # Job postings
     "we're hiring", "now hiring", "join our team",
 ]
 
@@ -161,21 +149,26 @@ _QUESTION_STARTERS = (
 
 @dataclass
 class IHDiagnostics:
-    pages_attempted:   int = 0
-    pages_succeeded:   int = 0
-    pages_failed:      int = 0
-    raw_candidates:    int = 0
-    freshness_skipped: int = 0   # no timestamp — counted but not rejected
-    heuristic_rejected:int = 0
-    final_candidates:  int = 0
-    parse_failures:    list = field(default_factory=list)   # labels that couldn't parse
+    pages_attempted:    int = 0
+    pages_succeeded:    int = 0
+    pages_failed:       int = 0
+    next_data_found:    int = 0   # pages where __NEXT_DATA__ was present
+    next_data_posts:    int = 0   # candidates extracted via __NEXT_DATA__
+    html_fallback_posts:int = 0   # candidates extracted via HTML selectors
+    raw_candidates:     int = 0
+    freshness_skipped:  int = 0
+    heuristic_rejected: int = 0
+    final_candidates:   int = 0
+    parse_failures:     list = field(default_factory=list)
 
     def log_summary(self) -> None:
         logger.info(
             "IH scraper done | pages=%d/%d (%d failed) | "
-            "raw=%d heuristic_rejected=%d final=%d | "
-            "parse_failures=%s",
+            "__next_data__=%d/%d posts | html_fallback=%d posts | "
+            "raw=%d heuristic_rejected=%d final=%d | parse_failures=%s",
             self.pages_succeeded, self.pages_attempted, self.pages_failed,
+            self.next_data_found, self.next_data_posts,
+            self.html_fallback_posts,
             self.raw_candidates,
             self.heuristic_rejected,
             self.final_candidates,
@@ -228,38 +221,166 @@ def _extract_keywords(title: str, body: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# HTML PARSING
+# __NEXT_DATA__ EXTRACTION  (primary strategy)
+# ---------------------------------------------------------------------------
+
+def _extract_next_data(html: str) -> dict | None:
+    """Parse Next.js __NEXT_DATA__ JSON from page HTML. Returns None if absent/invalid."""
+    soup = BeautifulSoup(html, "html.parser")
+    script = soup.find("script", id="__NEXT_DATA__")
+    if not script:
+        return None
+    try:
+        return json.loads(script.string or "")
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _candidates_from_next_data(data: dict, label: str) -> list[dict]:
+    """
+    Walk Next.js pageProps to find a post/thread array.
+
+    Tries multiple paths because IH uses different structures across page types.
+    Returns raw candidate dicts (not yet heuristic-scored).
+    """
+    candidates: list[dict] = []
+    page_props = data.get("props", {}).get("pageProps", {})
+
+    # Collect post arrays from several possible locations
+    posts: list = []
+
+    # Path 1: direct posts/threads key
+    for key in ("posts", "threads", "items", "discussions"):
+        val = page_props.get(key)
+        if isinstance(val, list) and val:
+            posts = val
+            logger.info("IH [%s]: __NEXT_DATA__ posts at pageProps.%s (%d items)", label, key, len(val))
+            break
+
+    # Path 2: nested one level deeper
+    if not posts:
+        for outer_key, outer_val in page_props.items():
+            if not isinstance(outer_val, dict):
+                continue
+            for key in ("posts", "threads", "items", "discussions"):
+                val = outer_val.get(key)
+                if isinstance(val, list) and val:
+                    posts = val
+                    logger.info(
+                        "IH [%s]: __NEXT_DATA__ posts at pageProps.%s.%s (%d items)",
+                        label, outer_key, key, len(val),
+                    )
+                    break
+            if posts:
+                break
+
+    # Path 3: look for any list-valued key that contains dicts with a "title" field
+    if not posts:
+        for key, val in page_props.items():
+            if isinstance(val, list) and val and isinstance(val[0], dict) and val[0].get("title"):
+                posts = val
+                logger.info("IH [%s]: __NEXT_DATA__ posts via heuristic key %r (%d items)", label, key, len(val))
+                break
+
+    if not posts:
+        logger.info("IH [%s]: __NEXT_DATA__ present but no post array found — keys: %s",
+                    label, list(page_props.keys())[:12])
+        return []
+
+    for post in posts:
+        if not isinstance(post, dict):
+            continue
+
+        title = post.get("title") or post.get("subject") or ""
+        body  = post.get("body") or post.get("content") or post.get("excerpt") or ""
+        if not title:
+            continue
+
+        # Build absolute URL
+        url = post.get("url") or post.get("link") or ""
+        if not url:
+            slug = post.get("slug") or post.get("id") or ""
+            if slug:
+                url = f"{IH_BASE}/post/{slug}"
+        if not url:
+            continue
+        if not url.startswith("http"):
+            url = urljoin(IH_BASE, url)
+
+        # Author
+        user   = post.get("user") or post.get("author") or {}
+        author = (user.get("username") or user.get("name") or "") if isinstance(user, dict) else str(user)
+
+        # Timestamp
+        created_at = (
+            post.get("createdAt") or post.get("created_at") or
+            post.get("publishedAt") or post.get("timestamp")
+        )
+
+        # Engagement
+        votes    = post.get("votes")         or post.get("score")        or post.get("likes")    or 0
+        comments = post.get("commentsCount") or post.get("num_comments") or post.get("comments") or 0
+
+        candidates.append({
+            "title":            str(title)[:200],
+            "body":             str(body)[:600] if body else "",
+            "source_url":       url,
+            "author":           str(author),
+            "source_created_at":created_at,
+            "post_score":       int(votes)    if isinstance(votes,    (int, float)) else 0,
+            "num_comments":     int(comments) if isinstance(comments, (int, float)) else 0,
+        })
+
+    return candidates
+
+
+# ---------------------------------------------------------------------------
+# HTML FALLBACK PARSING  (used when __NEXT_DATA__ yields nothing)
 # ---------------------------------------------------------------------------
 
 def _normalize_ih_url(href: str) -> str:
-    """Convert a relative /post/... href to an absolute IH URL."""
     if href.startswith("http"):
         return href.rstrip("/").lower()
     return urljoin(IH_BASE, href).rstrip("/").lower()
 
 
-def _parse_page(html: str, page_url: str, label: str) -> list[dict]:
+def _extract_nearby_body(link_el, soup: BeautifulSoup) -> str:
+    ancestor = link_el.parent
+    for _ in range(5):
+        if ancestor is None:
+            break
+        for sel in BODY_SELECTORS:
+            hit = ancestor.select_one(sel)
+            if hit:
+                text = hit.get_text(separator=" ", strip=True)
+                if len(text) > 30:
+                    return text[:600]
+        if ancestor.name in ("article", "section", "div", "li"):
+            break
+        ancestor = ancestor.parent
+    if ancestor:
+        text = ancestor.get_text(separator=" ", strip=True)
+        if len(text) > 30:
+            return text[:400]
+    return ""
+
+
+def _html_fallback_parse(html: str, label: str) -> list[dict]:
     """
-    Extract post candidates from an IH page.
-
-    Multi-strategy:
-      1. Try each TITLE_SELECTOR — first that yields results is used for titles.
-      2. For each title <a>, look for adjacent body text via BODY_SELECTORS.
-      3. Fallback: collect any <a> that matches IH post URL patterns.
-
-    Returns list of raw candidate dicts (not yet heuristic-scored).
+    CSS-selector + link-pattern fallback when __NEXT_DATA__ has no posts.
+    Logs at INFO so failures are visible in Railway.
     """
     soup = BeautifulSoup(html, "html.parser")
     seen_urls: set[str] = set()
     candidates: list[dict] = []
 
-    # --- Strategy 1: title selectors ---
+    # Strategy 1: title selectors
     title_elements = []
     for sel in TITLE_SELECTORS:
         found = soup.select(sel)
         if found:
             title_elements = found
-            logger.debug("IH [%s]: title selector %r matched %d elements", label, sel, len(found))
+            logger.info("IH [%s]: HTML title selector %r matched %d elements", label, sel, len(found))
             break
 
     for el in title_elements:
@@ -267,23 +388,17 @@ def _parse_page(html: str, page_url: str, label: str) -> list[dict]:
         title = el.get_text(strip=True)
         if not href or not title or len(title) < 8:
             continue
-
-        # Only keep IH-internal post/forum/group links
         parsed = urlparse(href)
         if parsed.netloc and "indiehackers.com" not in parsed.netloc:
             continue
         path = parsed.path or href
         if not _IH_POST_PATH_RE.match(path) and "indiehackers.com" not in href:
             continue
-
         norm_url = _normalize_ih_url(href)
         if norm_url in seen_urls:
             continue
         seen_urls.add(norm_url)
-
-        # Try to find body text near the title element
         body = _extract_nearby_body(el, soup)
-
         candidates.append({
             "title": title, "body": body,
             "source_url": urljoin(IH_BASE, href) if href.startswith("/") else href,
@@ -291,9 +406,9 @@ def _parse_page(html: str, page_url: str, label: str) -> list[dict]:
             "post_score": 0, "num_comments": 0,
         })
 
-    # --- Strategy 2 (fallback): scan ALL IH-pattern links ---
+    # Strategy 2: any IH-pattern <a> link
     if not candidates:
-        logger.debug("IH [%s]: title selectors yielded nothing — using link-pattern fallback", label)
+        logger.info("IH [%s]: HTML title selectors yielded nothing — scanning all IH-pattern links", label)
         for a in soup.find_all("a", href=True):
             href = a.get("href", "")
             if not href:
@@ -317,37 +432,62 @@ def _parse_page(html: str, page_url: str, label: str) -> list[dict]:
                 "post_score": 0, "num_comments": 0,
             })
 
-    logger.debug("IH [%s]: extracted %d raw candidates", label, len(candidates))
+    logger.info("IH [%s]: HTML fallback extracted %d candidates", label, len(candidates))
     return candidates
 
 
-def _extract_nearby_body(link_el, soup: BeautifulSoup) -> str:
-    """
-    Walk up the DOM from a link element and try BODY_SELECTORS on the parent.
-    Falls back to the parent's full text (truncated).
-    """
-    # Try body selectors on the closest block ancestor
-    ancestor = link_el.parent
-    for _ in range(5):  # walk up max 5 levels
-        if ancestor is None:
-            break
-        for sel in BODY_SELECTORS:
-            hit = ancestor.select_one(sel)
-            if hit:
-                text = hit.get_text(separator=" ", strip=True)
-                if len(text) > 30:
-                    return text[:600]
-        if ancestor.name in ("article", "section", "div", "li"):
-            break
-        ancestor = ancestor.parent
+# ---------------------------------------------------------------------------
+# PAGE PARSER  (orchestrates __NEXT_DATA__ → HTML fallback)
+# ---------------------------------------------------------------------------
 
-    # Fallback: raw text of the closest block ancestor
-    if ancestor:
-        text = ancestor.get_text(separator=" ", strip=True)
-        if len(text) > 30:
-            return text[:400]
+def _parse_page(html: str, page_url: str, label: str, diag: IHDiagnostics) -> list[dict]:
+    """
+    Extract post candidates from an IH page.
 
-    return ""
+    Priority:
+      1. __NEXT_DATA__ JSON (SSR data — most reliable for forum pages)
+      2. CSS-selector HTML pass
+      3. Any IH-pattern <a> link scan
+
+    Logs HTML title + first 800 chars at INFO if zero candidates found.
+    """
+    soup_for_title = BeautifulSoup(html, "html.parser")
+    page_title_el  = soup_for_title.find("title")
+    page_title     = page_title_el.get_text(strip=True) if page_title_el else "(no <title>)"
+
+    logger.info(
+        "IH [%s]: parsing — url=%s  html_len=%d  title=%r",
+        label, page_url, len(html), page_title[:80],
+    )
+
+    # --- Strategy 1: __NEXT_DATA__ ---
+    next_data = _extract_next_data(html)
+    if next_data is not None:
+        diag.next_data_found += 1
+        candidates = _candidates_from_next_data(next_data, label)
+        if candidates:
+            diag.next_data_posts += len(candidates)
+            logger.info("IH [%s]: __NEXT_DATA__ → %d candidates", label, len(candidates))
+            return candidates
+        logger.info("IH [%s]: __NEXT_DATA__ present but yielded 0 candidates — trying HTML fallback", label)
+    else:
+        logger.info("IH [%s]: no __NEXT_DATA__ script tag found — trying HTML fallback", label)
+
+    # --- Strategy 2 & 3: HTML ---
+    candidates = _html_fallback_parse(html, label)
+    diag.html_fallback_posts += len(candidates)
+
+    if not candidates:
+        # Dump first 800 chars so we can see what we're dealing with
+        snippet = html[:800].replace("\n", " ").replace("\r", "")
+        logger.warning(
+            "IH [%s]: ZERO candidates extracted from %s\n"
+            "  title:   %r\n"
+            "  html[:800]: %s",
+            label, page_url, page_title, snippet,
+        )
+
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -366,11 +506,9 @@ async def _fetch_page(
         resp = await client.get(url, headers=HEADERS, timeout=_TIMEOUT)
         if resp.status_code == 200:
             diag.pages_succeeded += 1
+            logger.info("IH [%s]: HTTP 200 — %s (%d bytes)", label, url, len(resp.content))
             return resp.text
-        logger.warning(
-            "IH [%s]: HTTP %d — %s",
-            label, resp.status_code, url,
-        )
+        logger.warning("IH [%s]: HTTP %d — %s", label, resp.status_code, url)
         diag.pages_failed += 1
         return None
     except httpx.TimeoutException:
@@ -395,12 +533,12 @@ async def scrape_indiehackers() -> list[dict]:
     Returns [] silently if IH_ENABLED is false.
     """
     if not IH_ENABLED:
-        logger.debug("IH scraper: disabled (IH_ENABLED=false)")
+        logger.info("IH scraper: disabled (IH_ENABLED=false)")
         return []
 
-    diag        = IHDiagnostics()
-    sem         = asyncio.Semaphore(_CONCURRENCY)
-    seen_urls:  set[str] = set()
+    diag         = IHDiagnostics()
+    sem          = asyncio.Semaphore(_CONCURRENCY)
+    seen_urls:   set[str] = set()
     all_signals: list[dict] = []
 
     pages = TARGET_PAGES[:_MAX_PAGES]
@@ -415,7 +553,7 @@ async def scrape_indiehackers() -> list[dict]:
             if html is None:
                 diag.parse_failures.append(label)
                 return []
-            raw = _parse_page(html, url, label)
+            raw = _parse_page(html, url, label, diag)
             diag.raw_candidates += len(raw)
             return raw
 
@@ -454,7 +592,6 @@ async def scrape_indiehackers() -> list[dict]:
                 content = f"{title}\n\n{body}".strip() if body else title
 
                 all_signals.append({
-                    # Core pipeline fields
                     "source":            "indiehackers",
                     "source_url":        source_url,
                     "author":            raw.get("author", ""),
@@ -462,28 +599,39 @@ async def scrape_indiehackers() -> list[dict]:
                     "body":              body,
                     "content":           content,
                     "keywords_matched":  _extract_keywords(title, body),
-                    # Engagement
                     "post_score":        raw.get("post_score", 0),
                     "num_comments":      raw.get("num_comments", 0),
-                    # Freshness — normalized_source_timestamp handles None safely
                     "source_created_at": normalize_source_timestamp(
                         raw.get("source_created_at")
                     ),
                     "scraped_at":        datetime.utcnow().isoformat(),
-                    # Pre-AI hint
                     "heuristic_score":   h_score,
                 })
 
-            # Polite delay between batches
-            await asyncio.sleep(_REQUEST_DELAY)
+        await asyncio.sleep(_REQUEST_DELAY)
 
     diag.final_candidates = len(all_signals)
     diag.log_summary()
 
+    # Sample output — first 5 candidates
+    if all_signals:
+        logger.info("IH scraper: sample candidates (first %d):", min(5, len(all_signals)))
+        for i, s in enumerate(all_signals[:5], 1):
+            logger.info(
+                "  [%d] h=%d  %r  %s",
+                i, s.get("heuristic_score", 0), s["title"][:80], s["source_url"],
+            )
+    else:
+        logger.warning(
+            "IH scraper: ZERO final candidates — "
+            "raw=%d rejected=%d | check page structure at indiehackers.com/forum",
+            diag.raw_candidates, diag.heuristic_rejected,
+        )
+
     if len(all_signals) < _TARGET_CANDS:
         logger.info(
             "IH scraper: %d candidates (below target %d) — "
-            "consider expanding TARGET_PAGES or lowering IH_MIN_HEURISTIC_SCORE",
+            "consider expanding TARGET_PAGES or checking __NEXT_DATA__ structure",
             len(all_signals), _TARGET_CANDS,
         )
 
